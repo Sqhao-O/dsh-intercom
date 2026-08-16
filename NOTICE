@@ -1,0 +1,28 @@
+# NOTICE
+
+dsh-intercom is derived in part from [pi-intercom](https://github.com/nicobailon/pi-intercom),
+Copyright (c) 2026 Nico Bailon, licensed under the MIT License.
+
+The following files are vendored (copied and adapted) from pi-intercom:
+
+- `broker/` — the intercom broker, client, framing, protocol, spawn, paths,
+  extension-state and runtime-claim modules, including their tests
+  (`broker/ask-timeout.ts` replaces the upstream `config.ts` ask-timeout helper)
+- `types.ts`, `cwd.ts` (and `cwd.test.ts`) — shared protocol types and the
+  same-directory helper
+
+Adaptations relative to upstream:
+
+- Environment variables renamed: `PI_CODING_AGENT_DIR` → `DSH_HOME`,
+  `PI_INTERCOM_*` → `DSH_INTERCOM_*`
+- State directory default changed from `~/.pi/agent` to `~/.dsh`
+- Windows named-pipe prefix `pi-intercom-` → `dsh-intercom-`; protocol name
+  `"pi-intercom"` → `"dsh-intercom"`
+- Broker launch no longer resolves tsx/npx: the default launch is
+  `node lib/broker/broker.js` via `process.execPath` (custom
+  `brokerCommand`/`brokerArgs` overrides are preserved)
+- `extension-state.ts`: temp state file is opened `r+` instead of `r` so the
+  durability `fsync` works on Windows (upstream opened it read-only, which
+  fails with EPERM there)
+
+The full MIT license text is in `LICENSE`.

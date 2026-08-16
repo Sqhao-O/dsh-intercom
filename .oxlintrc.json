@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "no-underscore-dangle": "off",
+    "no-useless-escape": "off"
+  },
+  "ignorePatterns": ["lib/**", "reference/**", "node_modules/**", "coverage/**"]
+}

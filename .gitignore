@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage
+coverage/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Local upstream reference clone (never committed)
+reference/
+
+# TypeScript incremental state
+*.tsbuildinfo
+
+# NOTE: lib/ (build output) is intentionally NOT ignored — dsh installs
+# plugins straight from GitHub without a build step, so artifacts are
+# committed and CI verifies they match the sources.
