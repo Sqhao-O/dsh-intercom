@@ -13,8 +13,10 @@ import type { Context } from "@deepseek-ai/cordis";
 // in registry.ts / tool.ts, so this entry needs no type-only imports of its own.
 import "./source.ts"; // MessageSourceMap merge: the 'intercom' relay kind
 import { loadConfig } from "./config.ts";
+import { registerPanelRoutes } from "./panel.ts";
 import { SessionRegistry } from "./registry.ts";
 import type { SessionTitleLike } from "./registry.ts";
+import { registerBundledSkill } from "./skill.ts";
 import { createIntercomTool } from "./tool.ts";
 import { BrokerTransport } from "./transport/broker.ts";
 import { LocalTransport } from "./transport/local.ts";
@@ -86,4 +88,10 @@ export function apply(ctx: Context): void {
   // Registered globally so every session in the process exposes the tool;
   // `exec.agent` disambiguates the caller.
   ctx.tools.register(createIntercomTool({ registry, local, broker, config }));
+
+  // Ship the coordination playbook as a runtime skill (see skill.ts).
+  registerBundledSkill(ctx);
+
+  // Web UI panel routes (no-op outside the web profile; see panel.ts).
+  registerPanelRoutes(ctx, { registry, broker, config });
 }

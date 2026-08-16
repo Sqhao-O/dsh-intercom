@@ -677,6 +677,11 @@ export class BrokerTransport {
     return this.sessions.get(agentId);
   }
 
+  /** Every attached broker session, one per local agent (panel roster source). */
+  listAttached(): BrokerSession[] {
+    return [...this.sessions.values()];
+  }
+
   /** Register and connect an agent (background connect; failures degrade gracefully). */
   attach(agent: Agent): void {
     if (!this.options.config.enabled) {

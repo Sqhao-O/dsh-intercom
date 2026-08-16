@@ -17,11 +17,14 @@ We use **trunk-based development**:
 
 ```bash
 pnpm install
+pnpm setup-hooks   # once per clone: installs the git hooks below
 ```
 
-`pnpm install` also installs git hooks via simple-git-hooks: a pre-commit hook
-runs lint-staged (prettier + oxlint on staged files) and a commit-msg hook runs
-commitlint.
+Git hooks via simple-git-hooks: a pre-commit hook runs lint-staged (prettier +
+oxlint on staged files) and a commit-msg hook runs commitlint. Hook install is
+a manual step (not a `prepare` script) on purpose: a `prepare` script makes
+pnpm block `dsh plugin add github:...` installs of this repo behind an
+onlyBuiltDependencies allowlist, which would break the zero-friction install.
 
 ## Common commands
 

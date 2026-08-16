@@ -115,6 +115,8 @@ function inspectTarball(tarball: string): void {
   for (const required of [
     "lib/src/index.js",
     "lib/broker/broker.js",
+    "client.js",
+    "skills/dsh-intercom/SKILL.md",
     "cordis.patch.yml",
     "package.json",
     "README.md",

@@ -1,6 +1,6 @@
 {
   "name": "dsh-intercom",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Intercom plugin for DeepSeek Harness (dsh): discovery and messaging between independent dsh sessions on the same machine",
   "license": "MIT",
   "type": "module",
@@ -11,30 +11,41 @@
   "main": "./lib/src/index.js",
   "exports": {
     ".": "./lib/src/index.js",
+    "./client": "./client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
+    "skills",
+    "client.js",
     "cordis.patch.yml",
     "NOTICE"
   ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
     }
   },
   "scripts": {
     "build": "tsdown",
+    "setup-hooks": "simple-git-hooks",
     "test": "tsx --test broker/ask-timeout.test.ts broker/abuse.test.ts broker/client.test.ts broker/client-liveness.test.ts broker/extension.test.ts broker/framing.test.ts broker/paths.test.ts broker/runtime-claim.test.ts broker/spawn.test.ts cwd.test.ts tests/config.test.ts tests/config-lifecycle.test.ts tests/registry.test.ts tests/message.test.ts tests/reply-tracker.test.ts tests/transport-local.test.ts tests/tool.test.ts tests/tool-abort.test.ts tests/tool-broker.test.ts tests/docs.test.ts tests/intercom.integration.test.ts",
     "test:e2e": "tsx tests/e2e/run.ts",
     "test:install": "tsx tests/e2e/install-preview.ts",
+    "test:panel": "tsx tests/e2e/panel.ts",
+    "test:dod": "tsx tests/e2e/dod-install.ts",
     "lint": "oxlint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "changeset": "changeset",
-    "prepare": "simple-git-hooks"
+    "changeset": "changeset"
   },
   "lint-staged": {
     "*.{ts,js,mjs,json,md,yml,yaml}": [

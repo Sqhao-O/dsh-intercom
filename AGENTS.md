@@ -27,11 +27,25 @@ Bailon) — attribution lives in `NOTICE`.
   / `ask` / `reply` / `pending` / `status` / `cancel` / `name`), config
   loading (`config.ts`, `$DSH_HOME/intercom/config.json`, malformed →
   fail-closed), the reply tracker (`reply-tracker.ts`, ported from
-  pi-intercom), and the transport layer (`transport/types.ts` interface,
+  pi-intercom), the transport layer (`transport/types.ts` interface,
   `transport/local.ts` same-process direct delivery used as fallback,
   `transport/broker.ts` cross-process delivery — one `IntercomClient` per
   registered agent, auto-spawning the broker, with reconnect backoff,
-  receipts, dedup, and the reply waiter).
+  receipts, dedup, and the reply waiter), the bundled-skill registration
+  (`skill.ts`, see below), and the Web UI panel host routes (`panel.ts`).
+- `skills/dsh-intercom/SKILL.md` — the coordination-playbook skill. dsh rc.6
+  discovers skills only from project/user roots, so `src/skill.ts` reads this
+  packaged file and registers it as a runtime skill via `ctx.skills.register()`
+  at plugin load (no manual install step; skipped when the profile has no
+  skill registry).
+- `client.js` — the Web UI panel **browser half**, hand-written in dsh's
+  client-module format (`window.__ModuleLoader__.load` envelope around a CJS
+  factory exporting `inject`/`apply`; React via the loader's `require`). It
+  registers an "Intercom" page into the `settings.section` slot and talks to
+  the host routes (`GET /intercom/roster`, `POST /intercom/send`). Wired by
+  the `dsh.client` field + `exports["./client"]` in package.json; NOT built by
+  tsdown — edit it directly. The panel sends only as a session hosted by the
+  same dsh process (no pseudo-identity).
 - `tests/` — cross-module tests that are not part of the vendored set:
   `tests/smoke.mjs` (compiled broker), `tests/*.test.ts` (plugin unit tests;
   `tests/intercom.integration.test.ts` runs the tool + BrokerTransport and a
@@ -58,7 +72,7 @@ Bailon) — attribution lives in `NOTICE`.
 ## Commands
 
 ```bash
-pnpm install     # also installs git hooks (simple-git-hooks)
+pnpm install     # then `pnpm setup-hooks` once per clone (git hooks via simple-git-hooks)
 pnpm build       # tsdown → lib/ (ESM, one file per source file)
 pnpm test        # tsx --test over broker/cwd/plugin unit tests (incl. abuse + docs tests)
 pnpm test:e2e    # real-dsh end-to-end (tests/e2e/; needs pnpm build + global dsh)

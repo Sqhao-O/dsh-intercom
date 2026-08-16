@@ -25,6 +25,19 @@ export function apply(ctx) {
         throw new Error("intercom tool is not registered");
       }
       process.stdout.write(`${tag} PASS intercom tool registered\n`);
+      // The bundled coordination skill must be registered as a runtime skill
+      // (dsh rc.6 has no plugin-shipped skill discovery; src/skill.ts wires it).
+      const skills = ctx.get("skills");
+      if (!skills) {
+        throw new Error("skills registry service is absent from this profile");
+      }
+      const catalog = await skills.list();
+      if (!catalog.some((skill) => skill.name === "dsh-intercom")) {
+        throw new Error(
+          `dsh-intercom skill missing from the catalog: ${JSON.stringify(catalog.map((skill) => skill.name))}`,
+        );
+      }
+      process.stdout.write(`${tag} PASS dsh-intercom skill registered\n`);
       clearTimeout(timer);
       const appExit = ctx.get("appExit");
       if (typeof appExit === "function") appExit(0);

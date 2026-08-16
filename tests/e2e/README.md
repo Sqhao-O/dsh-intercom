@@ -7,13 +7,33 @@ globally installed `dsh` (resolved from `npm root -g`, or point `DSH_BIN` at
 `.../@deepseek-ai/dsh/lib/bin.js`).
 
 `pnpm test:install` (`install-preview.ts`, also not part of `pnpm test`) is
-the local equivalent of `dsh plugin add github:<owner>/dsh-intercom`: it runs
-`pnpm pack`, inspects the tarball (must contain `lib/`, `cordis.patch.yml`,
-`NOTICE`, no sources), installs the tarball into a scratch `DSH_HOME` via the
-real dsh CLI, checks `--dump-config` lists the plugin, and boots a headless
-profile with `install-check.mjs` to prove the installed module loads and
-registers the `intercom` tool. It also runs the README `link:` install flow in
+the local equivalent of `dsh plugin add github:Sqhao-O/dsh-intercom`: it runs
+`pnpm pack`, inspects the tarball (must contain `lib/`, `client.js`,
+`skills/`, `cordis.patch.yml`, `NOTICE`, no sources), installs the tarball
+into a scratch `DSH_HOME` via the real dsh CLI, checks `--dump-config` lists
+the plugin, and boots a headless profile with `install-check.mjs` to prove
+the installed module loads, registers the `intercom` tool, and registers the
+bundled `dsh-intercom` skill. It also runs the README `link:` install flow in
 a second scratch home. The real `~/.dsh` is never touched.
+
+`pnpm test:panel` (`panel.ts` + `panel-probe.mjs`) covers the Web UI panel:
+it link-installs the checkout into a scratch web profile, inserts the probe
+through the profile's user patch layer (`dsh web` accepts no `--patch`), and
+boots a real `dsh web` server. It asserts the browser half is served at
+`/plugins/dsh-intercom/client.js` and appears in the `__DSH_BOOT__` graph,
+that `GET /intercom/roster` lists the probe's planner/worker sessions through
+the broker, and that `POST /intercom/send` delivers a real message into the
+worker's session log (plus a 400 for a non-local sender).
+
+`pnpm test:dod` (`dod-install.ts` + `dod-runner.mjs`) is the final
+Definition-of-Done acceptance: it runs
+`dsh plugin --profile web add github:Sqhao-O/dsh-intercom` against the pushed
+GitHub repo in a fresh scratch home (with a git url.insteadOf SSH→HTTPS
+rewrite in the child env, and the CLI-hint `onlyBuiltDependencies` fallback
+while the pushed HEAD still carries a `prepare` script), asserts the composed
+config row, then boots two headless dsh processes against the **installed**
+package and proves planner→worker `send` delivery (relay + wake) and a
+worker→planner `ask`/`reply`.
 
 ## What runs
 

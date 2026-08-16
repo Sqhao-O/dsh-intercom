@@ -28,6 +28,10 @@ const E2E_SOURCES = [
   "tests/e2e/runner-plugin.mjs",
   "tests/e2e/install-preview.ts",
   "tests/e2e/install-check.mjs",
+  "tests/e2e/panel.ts",
+  "tests/e2e/panel-probe.mjs",
+  "tests/e2e/dod-install.ts",
+  "tests/e2e/dod-runner.mjs",
 ].map((file) => readFileSync(join(repoDir, file), "utf8"));
 
 /** pnpm subcommands that need no package.json script entry. */
