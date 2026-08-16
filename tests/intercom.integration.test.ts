@@ -867,8 +867,10 @@ async function setupPlugin(
   options: {
     askTimeoutMs?: number;
     alias?: string;
+    config?: IntercomConfig;
   } = {},
 ) {
+  const config = options.config ?? pluginConfig;
   const registry = new SessionRegistry();
   const { agent, calls } = recordingAgent("integ-self", "idle");
   registry.add(agent);
@@ -876,7 +878,7 @@ async function setupPlugin(
     registry.alias(agent, options.alias);
   }
   const transport = new BrokerTransport({
-    config: pluginConfig,
+    config,
     aliasOf: (id) => registry.aliasOf(id),
     spawnBroker: () => Promise.resolve(),
     ...(options.askTimeoutMs !== undefined
@@ -890,7 +892,7 @@ async function setupPlugin(
     registry,
     local,
     broker: transport,
-    config: pluginConfig,
+    config,
   });
   return { registry, transport, tool, agent, calls };
 }
@@ -1168,6 +1170,100 @@ test(
       assert.deepEqual(redelivered, []);
     } finally {
       await replacement.disconnect().catch(() => undefined);
+      await transport.dispose();
+      await cleanup();
+    }
+  },
+);
+
+test(
+  "inboundTrigger never parks inbound sends via inject without waking a turn",
+  { concurrency: false },
+  async () => {
+    const { planner, cleanup } = await setupClients();
+    const { transport, calls } = await setupPlugin({
+      config: { ...pluginConfig, inboundTrigger: "never" },
+    });
+    try {
+      await waitForSessionId(planner, "integ-self");
+      const sent = await planner.send("integ-self", {
+        messageId: "never-park-1",
+        text: "parked, no wake",
+      });
+      assert.equal(sent.delivered, true);
+
+      const deadline = Date.now() + 3000;
+      while (calls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      // The message lands as context (inject) only — no followup/steer wake.
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]!.method, "inject");
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(calls.length, 1, "no wake delivery may follow the inject");
+    } finally {
+      await transport.dispose();
+      await cleanup();
+    }
+  },
+);
+
+test(
+  "inboundTrigger replies parks plain sends but wakes on replies",
+  { concurrency: false },
+  async () => {
+    const { planner, cleanup } = await setupClients();
+    const { transport, calls } = await setupPlugin({
+      config: { ...pluginConfig, inboundTrigger: "replies" },
+    });
+    try {
+      await waitForSessionId(planner, "integ-self");
+
+      // A plain (non-reply) send is parked via inject, no new turn.
+      const plain = await planner.send("integ-self", {
+        messageId: "replies-park-1",
+        text: "fyi only",
+      });
+      assert.equal(plain.delivered, true);
+      const parkDeadline = Date.now() + 3000;
+      while (calls.length === 0 && Date.now() < parkDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]!.method, "inject");
+
+      // Set up a real ask edge (plugin → planner) at the client level, with no
+      // reply waiter, so the planner's reply is a valid inbound reply.
+      const selfClient = transport.sessionFor("integ-self")!.client!;
+      const askOut = await selfClient.send(planner.sessionId!, {
+        messageId: "replies-edge-ask",
+        text: "question for the planner",
+        expectsReply: true,
+      });
+      assert.equal(askOut.delivered, true);
+      const plannerGotAsk = once(planner, "message") as Promise<
+        [SessionInfo, Message]
+      >;
+      const [, askMessage] = await plannerGotAsk;
+      assert.equal(askMessage.id, "replies-edge-ask");
+
+      const reply = await planner.send("integ-self", {
+        text: "the answer",
+        replyTo: "replies-edge-ask",
+      });
+      assert.equal(reply.delivered, true);
+      const wakeDeadline = Date.now() + 3000;
+      while (calls.length < 2 && Date.now() < wakeDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(calls.length, 2);
+      assert.equal(
+        calls[1]!.method,
+        "followup",
+        "a reply must wake the idle session under inboundTrigger: replies",
+      );
+    } finally {
       await transport.dispose();
       await cleanup();
     }

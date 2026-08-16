@@ -668,6 +668,28 @@ test("the same message id is injected at most once per receiving session", async
   );
 });
 
+test("a custom status suffix from config appears in the roster listing", async () => {
+  const { tool, self, client } = await setup({
+    config: { ...defaultConfig, status: "on-call" },
+  });
+  // The suffix flows into the registration presence status.
+  assert.equal(client.registration?.status, "idle · on-call");
+  // ...and a roster carrying it renders the suffix in `list` output.
+  client.roster[0] = sessionInfo(
+    "self-full-id",
+    "planner",
+    "D:/self",
+    "idle · on-call",
+  );
+  const out = (await tool.execute({ action: "list" }, execFor(self))) as string;
+  assert.match(out, /idle · on-call/);
+  const statusOut = (await tool.execute(
+    { action: "status" },
+    execFor(self),
+  )) as string;
+  assert.match(statusOut, /status="on-call"/);
+});
+
 test("status reports broker mode, session id, and roster size", async () => {
   const { tool, self } = await setup();
   const out = (await tool.execute(

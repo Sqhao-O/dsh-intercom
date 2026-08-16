@@ -110,6 +110,33 @@ function requireMessage(message: string | undefined, action: string): string {
 }
 
 /**
+ * Reject with "Cancelled" when the abort signal fires before `promise`
+ * settles. The in-flight broker round-trip itself is not interrupted (the
+ * protocol has no request cancellation); the caller simply stops waiting, and
+ * Promise.race keeps a handler attached so the late settlement cannot surface
+ * as an unhandled rejection.
+ */
+function raceAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(new Error("Cancelled"));
+  }
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("Cancelled")), {
+        once: true,
+      });
+    }),
+  ]);
+}
+
+/**
  * Resolve a name, full session id, or unique id prefix against the broker
  * roster (ported pi-intercom semantics: exact id, then exact name, then
  * prefix). Returns null when nothing matches — the broker itself resolves
@@ -119,8 +146,9 @@ function requireMessage(message: string | undefined, action: string): string {
 async function resolveSessionTarget(
   client: BrokerClientLike,
   nameOrId: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const sessions = await client.listSessions();
+  const sessions = await raceAbort(client.listSessions(), signal);
   const byId = sessions.find((session) => session.id === nameOrId);
   if (byId) {
     return byId.id;
@@ -161,8 +189,9 @@ async function resolveSessionTarget(
 async function resolveCwdTarget(
   client: BrokerClientLike,
   options: { to?: string; cwd: string },
+  signal?: AbortSignal,
 ): Promise<DeliveryTarget> {
-  const sessions = await client.listSessions();
+  const sessions = await raceAbort(client.listSessions(), signal);
   const current = sessions.find((session) => session.id === client.sessionId);
   if (!current) {
     throw new Error("Current session is missing from intercom session list.");
@@ -177,7 +206,7 @@ async function resolveCwdTarget(
   );
 
   if (options.to) {
-    const resolved = await resolveSessionTarget(client, options.to);
+    const resolved = await resolveSessionTarget(client, options.to, signal);
     const match = candidates.find((session) => session.id === resolved);
     if (!match) {
       throw new Error(
@@ -205,13 +234,19 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
   /** The calling agent's connected broker client, when available. */
   async function connectedClient(
     selfId: string,
+    signal?: AbortSignal,
   ): Promise<{ session: BrokerSession; client: BrokerClientLike } | undefined> {
     if (!deps.config.enabled) return undefined;
     const session = deps.broker.sessionFor(selfId);
     if (!session) return undefined;
     try {
-      return { session, client: await session.ensureConnected() };
-    } catch {
+      return {
+        session,
+        client: await raceAbort(session.ensureConnected(), signal),
+      };
+    } catch (error) {
+      // An abort must reject the tool call, not degrade to local fallback.
+      if (signal?.aborted) throw error;
       return undefined;
     }
   }
@@ -220,6 +255,7 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
   async function requireBroker(
     selfId: string,
     action: string,
+    signal?: AbortSignal,
   ): Promise<{ session: BrokerSession; client: BrokerClientLike }> {
     if (!deps.config.enabled) {
       throw new Error(disabledError);
@@ -231,8 +267,14 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
       );
     }
     try {
-      return { session, client: await session.ensureConnected() };
+      return {
+        session,
+        client: await raceAbort(session.ensureConnected(), signal),
+      };
     } catch (error) {
+      if (signal?.aborted) {
+        throw new Error("Cancelled", { cause: error });
+      }
       throw new Error(
         `intercom: "${action}" needs the cross-process broker, but it is unavailable: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -324,9 +366,12 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
 
       switch (args.action) {
         case "list": {
-          const connected = await connectedClient(selfId);
+          const connected = await connectedClient(selfId, exec.signal);
           if (connected) {
-            const sessions = await connected.client.listSessions();
+            const sessions = await raceAbort(
+              connected.client.listSessions(),
+              exec.signal,
+            );
             const prefixes = sessionIdPrefixes(
               sessions.map((session) => session.id),
             );
@@ -365,9 +410,12 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
         }
 
         case "list-cwd": {
-          const connected = await connectedClient(selfId);
+          const connected = await connectedClient(selfId, exec.signal);
           if (connected) {
-            const sessions = await connected.client.listSessions();
+            const sessions = await raceAbort(
+              connected.client.listSessions(),
+              exec.signal,
+            );
             const current = sessions.find(
               (session) => session.id === connected.client.sessionId,
             );
@@ -447,7 +495,7 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
             );
           const body = requireMessage(args.message, "send");
 
-          const connected = await connectedClient(selfId);
+          const connected = await connectedClient(selfId, exec.signal);
           if (!connected) {
             if (
               cwd ||
@@ -485,9 +533,14 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
 
           const { session, client } = connected;
           const target: DeliveryTarget = cwd
-            ? await resolveCwdTarget(client, { ...(to ? { to } : {}), cwd })
+            ? await resolveCwdTarget(
+                client,
+                { ...(to ? { to } : {}), cwd },
+                exec.signal,
+              )
             : {
-                id: (await resolveSessionTarget(client, to!)) ?? to!,
+                id:
+                  (await resolveSessionTarget(client, to!, exec.signal)) ?? to!,
                 label: to!,
               };
           if (target.id === client.sessionId) {
@@ -497,13 +550,16 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
             ? null
             : session.tracker.findUniquePendingAskFrom(target.id);
           const effectiveReplyTo = args.replyTo ?? inferredAsk?.message.id;
-          const result = await client.send(target.id, {
-            text: body,
-            ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
-            ...(args.messageId ? { messageId: args.messageId } : {}),
-            ...(args.supersedes ? { supersedes: args.supersedes } : {}),
-            ...(args.retryOf ? { retryOf: args.retryOf } : {}),
-          });
+          const result = await raceAbort(
+            client.send(target.id, {
+              text: body,
+              ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
+              ...(args.messageId ? { messageId: args.messageId } : {}),
+              ...(args.supersedes ? { supersedes: args.supersedes } : {}),
+              ...(args.retryOf ? { retryOf: args.retryOf } : {}),
+            }),
+            exec.signal,
+          );
           if (!result.delivered) {
             throw new Error(
               `Message to "${target.label}" was not delivered: ${result.reason ?? "Session may not exist or has disconnected."}`,
@@ -525,7 +581,11 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
               'intercom: "ask" requires a "to" parameter (alias or session id) or a "cwd" scope.',
             );
           const body = requireMessage(args.message, "ask");
-          const { session, client } = await requireBroker(selfId, "ask");
+          const { session, client } = await requireBroker(
+            selfId,
+            "ask",
+            exec.signal,
+          );
 
           if (session.hasWaiter()) {
             throw new Error(
@@ -538,12 +598,20 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
 
           let target: DeliveryTarget;
           if (cwd) {
-            target = await resolveCwdTarget(client, {
-              ...(to ? { to } : {}),
-              cwd,
-            });
+            target = await resolveCwdTarget(
+              client,
+              {
+                ...(to ? { to } : {}),
+                cwd,
+              },
+              exec.signal,
+            );
           } else {
-            const resolved = await resolveSessionTarget(client, to!);
+            const resolved = await resolveSessionTarget(
+              client,
+              to!,
+              exec.signal,
+            );
             if (!resolved) {
               throw new Error(
                 `Session "${to}" is not currently connected. Blocking asks are not queued; use send for a non-blocking mailbox delivery or retry after the session reconnects.`,
@@ -569,14 +637,17 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
           replyPromise.catch(() => undefined);
 
           try {
-            const sendResult = await client.send(target.id, {
-              messageId: questionId,
-              text: body,
-              expectsReply: true,
-              ...(args.replyTo ? { replyTo: args.replyTo } : {}),
-              ...(args.supersedes ? { supersedes: args.supersedes } : {}),
-              ...(args.retryOf ? { retryOf: args.retryOf } : {}),
-            });
+            const sendResult = await raceAbort(
+              client.send(target.id, {
+                messageId: questionId,
+                text: body,
+                expectsReply: true,
+                ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+                ...(args.supersedes ? { supersedes: args.supersedes } : {}),
+                ...(args.retryOf ? { retryOf: args.retryOf } : {}),
+              }),
+              exec.signal,
+            );
             deliveryState = sendResult.delivered
               ? "socket_delivered"
               : "delivery_failed";
@@ -607,7 +678,11 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
 
         case "reply": {
           const body = requireMessage(args.message, "reply");
-          const { session, client } = await requireBroker(selfId, "reply");
+          const { session, client } = await requireBroker(
+            selfId,
+            "reply",
+            exec.signal,
+          );
 
           const target = session.tracker.resolveReplyTarget({
             ...(args.to?.trim() ? { to: args.to.trim() } : {}),
@@ -616,10 +691,13 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
           if (target.from.id === client.sessionId) {
             throw new Error("intercom: cannot message the current session.");
           }
-          const result = await client.send(target.from.id, {
-            text: body,
-            replyTo: target.message.id,
-          });
+          const result = await raceAbort(
+            client.send(target.from.id, {
+              text: body,
+              replyTo: target.message.id,
+            }),
+            exec.signal,
+          );
           if (!result.delivered) {
             if (result.reason === "Session not found") {
               session.tracker.dismissPendingAsk(target.message.id);
@@ -659,8 +737,11 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
               'intercom: "cancel" requires a "messageId" parameter.',
             );
           }
-          const { client } = await requireBroker(selfId, "cancel");
-          const result = await client.cancelMessage(messageId);
+          const { client } = await requireBroker(selfId, "cancel", exec.signal);
+          const result = await raceAbort(
+            client.cancelMessage(messageId),
+            exec.signal,
+          );
           if (!result.delivered) {
             throw new Error(
               `Cancellation for ${messageId} was not delivered: ${result.reason ?? "Message may not exist or may belong to another sender."}`,
@@ -678,9 +759,12 @@ export function createIntercomTool(deps: IntercomToolDeps): ToolDefinition {
             lines.push("Transport: disabled — no broker connections are made.");
             return lines.join("\n");
           }
-          const connected = await connectedClient(selfId);
+          const connected = await connectedClient(selfId, exec.signal);
           if (connected) {
-            const roster = await connected.client.listSessions();
+            const roster = await raceAbort(
+              connected.client.listSessions(),
+              exec.signal,
+            );
             lines.push(
               `Transport: broker (cross-process), ${health.connected}/${health.registered} agent(s) connected`,
               `Session ID: ${connected.client.sessionId}`,

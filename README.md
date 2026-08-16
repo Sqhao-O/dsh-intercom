@@ -13,11 +13,11 @@ Ported from [pi-intercom](https://github.com/nicobailon/pi-intercom) (MIT, Copyr
 ## Status
 
 **Work in progress.** M0 (repository scaffold + vendored broker), M1 (dsh
-plugin shell with same-process delivery), and M2 (cross-process broker
-transport + ask/reply) are complete. The `intercom` tool supports the full
-action set below between sessions living in one dsh process **and** across
-independent dsh processes on the same machine. Remaining: M3 (robustness and
-config hardening) and M4 (Web UI panel, SKILL.md, v1.0).
+plugin shell with same-process delivery), M2 (cross-process broker transport +
+ask/reply), and M3 (robustness and config hardening) are complete. The
+`intercom` tool supports the full action set below between sessions living in
+one dsh process **and** across independent dsh processes on the same machine.
+Remaining: M4 (Web UI panel, SKILL.md, v1.0).
 
 ## How it works
 
@@ -57,7 +57,18 @@ working directory reconnects. `DSH_INTERCOM_ASK_TIMEOUT_MS` overrides the
 
 ## Configuration
 
-Optional `$DSH_HOME/intercom/config.json`:
+Optional `$DSH_HOME/intercom/config.json` — full reference (every key is
+optional; unknown keys are ignored):
+
+| Key              | Type                               | Default    | Meaning                                                                                                                                                                                                                                             |
+| ---------------- | ---------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`        | boolean                            | `true`     | When `false` the plugin loads but never spawns or connects to the broker; every tool action except `status` answers with a clear disabled message.                                                                                                  |
+| `inboundTrigger` | `"always" \| "replies" \| "never"` | `"always"` | Whether an inbound broker message may wake the session into a new model turn: `"always"` wakes on every message, `"replies"` only wakes on replies to messages this session sent, `"never"` only queues messages as context (no turn is triggered). |
+| `replyHint`      | boolean                            | `true`     | Append the `intercom({ action: "reply" ... })` hint to inbound messages that expect a reply.                                                                                                                                                        |
+| `status`         | string                             | —          | Custom suffix appended to the automatic `idle`/`thinking` presence status shown to peers (e.g. `"idle · on-call"`).                                                                                                                                 |
+| `confirmSend`    | boolean                            | `false`    | Accepted for pi-intercom config compatibility but a **no-op**: dsh's host-level tool-approval flow is the equivalent confirmation gate, so the plugin never opens its own dialog.                                                                   |
+
+Example:
 
 ```json
 {
@@ -68,31 +79,39 @@ Optional `$DSH_HOME/intercom/config.json`:
 }
 ```
 
-- `enabled` (default `true`) — when `false` the plugin loads but never
-  connects to the broker and the tool answers with a clear disabled message.
-- `inboundTrigger` — `"always"` (default) wakes the session on every inbound
-  message; `"replies"` only wakes on replies to messages this session sent;
-  `"never"` queues inbound messages as context without triggering a turn.
-- `replyHint` (default `true`) — append the `intercom({ action: "reply" ... })`
-  hint to inbound messages that expect a reply.
-- `status` — custom suffix appended to the automatic `idle`/`thinking`
-  presence status shown to peers.
-- `confirmSend` — accepted for pi-intercom config compatibility but a
-  **no-op**: dsh's host-level tool-approval flow is the equivalent
-  confirmation gate, so the plugin never opens its own dialog.
-
 A malformed config file fails closed: the plugin keeps working with defaults
-except `inboundTrigger: "never"`, and logs a warning.
+except `inboundTrigger: "never"`, and logs a warning. The config is **loaded
+once at plugin load** — changing `config.json` afterwards takes effect only
+after restarting dsh.
 
 ## Installation
 
-> Not published yet. Once released:
+> Not published to GitHub yet. Once the repo is public:
 >
 > ```
 > dsh plugin add github:<owner>/dsh-intercom
 > ```
+>
+> `lib/` build artifacts are committed, so the GitHub install runs no build
+> step — it composes exactly like the tarball install below (verified by
+> `pnpm test:install`).
 
-For a local checkout, see "Local development" below.
+### Install from tarball
+
+The local equivalent of the GitHub install, verified end to end against a
+scratch `DSH_HOME` (never the real `~/.dsh`):
+
+```bash
+pnpm build
+pnpm pack --pack-destination "$(mktemp -d)"   # produces dsh-intercom-<version>.tgz
+export DSH_HOME="$(mktemp -d)"                # scratch home (Git Bash syntax)
+dsh plugin --profile web add /path/to/dsh-intercom-<version>.tgz
+dsh --profile web --dump-config | grep dsh-intercom   # verify the composed row
+```
+
+The tarball contains only `lib/`, `cordis.patch.yml`, `package.json`,
+`README*`, `LICENSE`, and `NOTICE` — no sources or tests. For a local
+checkout, see "Local development" below.
 
 ## Development
 
@@ -138,7 +157,21 @@ the peer's `reply` unblocks it, and — after the worker process is killed — a
 immediately failing `ask`, a mailbox-queued `send`, and delivery of that
 queued message to the relaunched worker (same alias + cwd). No real API key is
 used and the real `~/.dsh` is never touched. See
-[tests/e2e/README.md](tests/e2e/README.md).
+[tests/e2e/README.md](tests/e2e/README.md). `pnpm test:install` (also kept out
+of `pnpm test`) runs the install preview: pack the tarball, inspect its
+contents, install it into a scratch `DSH_HOME` with the real dsh CLI, and boot
+it headless to prove the module loads.
+
+## Known limitations
+
+- **Same machine only.** Discovery and delivery go through a local socket
+  (unix socket or Windows named pipe) keyed by `$DSH_HOME/intercom` — there is
+  no cross-host transport.
+- **Text messages only.** Attachments (files/snippets/context) exist in the
+  vendored protocol types but the tool does not accept or render them yet.
+- **`confirmSend` is a no-op** (see the config table).
+- **No UI panel yet.** Interaction is purely through the `intercom` tool; a
+  Web UI slot panel is planned for M4, and there is no TUI overlay.
 
 ## License
 

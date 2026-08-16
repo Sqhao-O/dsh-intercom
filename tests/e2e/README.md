@@ -6,6 +6,15 @@ intercom path end to end. Requires a built `lib/` (`pnpm build` first) and a
 globally installed `dsh` (resolved from `npm root -g`, or point `DSH_BIN` at
 `.../@deepseek-ai/dsh/lib/bin.js`).
 
+`pnpm test:install` (`install-preview.ts`, also not part of `pnpm test`) is
+the local equivalent of `dsh plugin add github:<owner>/dsh-intercom`: it runs
+`pnpm pack`, inspects the tarball (must contain `lib/`, `cordis.patch.yml`,
+`NOTICE`, no sources), installs the tarball into a scratch `DSH_HOME` via the
+real dsh CLI, checks `--dump-config` lists the plugin, and boots a headless
+profile with `install-check.mjs` to prove the installed module loads and
+registers the `intercom` tool. It also runs the README `link:` install flow in
+a second scratch home. The real `~/.dsh` is never touched.
+
 ## What runs
 
 `run.ts` (driver, in-process):

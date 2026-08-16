@@ -36,7 +36,12 @@ Bailon) — attribution lives in `NOTICE`.
   `tests/smoke.mjs` (compiled broker), `tests/*.test.ts` (plugin unit tests;
   `tests/intercom.integration.test.ts` runs the tool + BrokerTransport and a
   ported pi-intercom broker protocol suite against a real broker spawned from
-  source), `tests/e2e/` (real-dsh cross-process end-to-end, see its README).
+  source; `tests/tool-abort.test.ts` audits `exec.signal` cancellation across
+  every tool action; `tests/config-lifecycle.test.ts` proves `enabled: false`
+  never spawns the broker; `tests/docs.test.ts` is the docs-as-tests check that
+  every runnable README command is really executed somewhere),
+  `tests/e2e/` (real-dsh cross-process end-to-end and the tarball install
+  preview, see its README).
 - `lib/` — **committed build output** (see below).
 
 ### Runtime layout
@@ -55,8 +60,9 @@ Bailon) — attribution lives in `NOTICE`.
 ```bash
 pnpm install     # also installs git hooks (simple-git-hooks)
 pnpm build       # tsdown → lib/ (ESM, one file per source file)
-pnpm test        # tsx --test over broker/cwd/plugin unit tests
+pnpm test        # tsx --test over broker/cwd/plugin unit tests (incl. abuse + docs tests)
 pnpm test:e2e    # real-dsh end-to-end (tests/e2e/; needs pnpm build + global dsh)
+pnpm test:install# tarball install preview (pack → install → boot in a scratch DSH_HOME)
 pnpm lint        # oxlint
 pnpm format      # prettier --write
 pnpm typecheck   # tsc --noEmit (strict, NodeNext)
@@ -79,8 +85,10 @@ pnpm changeset   # add a changeset
 
 - Broker unit/integration tests live next to the sources in `broker/*.test.ts`
   and run on the TypeScript sources via tsx.
-- `broker/extension.test.ts` spawns a real broker subprocess from source using
-  the dev-dependency tsx CLI.
+- `broker/extension.test.ts` and `broker/abuse.test.ts` spawn a real broker
+  subprocess from source using the dev-dependency tsx CLI; `abuse.test.ts`
+  injects malformed frames, protocol violations, and rate-limit floods and
+  asserts the offending connection dies while the broker stays alive.
 - `tests/smoke.mjs` verifies the **compiled** artifact: it spawns
   `node lib/broker/broker.js` with `DSH_HOME` pointed at a temp dir and passes
   a message between two compiled clients. Run `pnpm build` first.

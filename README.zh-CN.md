@@ -13,8 +13,9 @@
 ## 状态
 
 **开发中(WIP)。** M0(仓库脚手架 + vendor broker)、M1(dsh 插件壳 + 同进程直投)、
-M2(跨进程 broker 传输 + ask/reply)已完成。`intercom` 工具支持下文列出的全部 action,
-覆盖同一 dsh 进程内的 session **以及**同一台机器上相互独立的 dsh 进程。剩余:M3(健壮性与配置加固)、M4(Web UI 面板、SKILL.md、v1.0)。
+M2(跨进程 broker 传输 + ask/reply)、M3(健壮性与配置加固)已完成。`intercom` 工具支持
+下文列出的全部 action,覆盖同一 dsh 进程内的 session **以及**同一台机器上相互独立的
+dsh 进程。剩余:M4(Web UI 面板、SKILL.md、v1.0)。
 
 ## 工作原理
 
@@ -49,7 +50,17 @@ session 重连时投递。`DSH_INTERCOM_ASK_TIMEOUT_MS` 可覆盖默认 10 分�
 
 ## 配置
 
-可选的 `$DSH_HOME/intercom/config.json`:
+可选的 `$DSH_HOME/intercom/config.json` —— 完整配置项参考(所有键均可选;未知键被忽略):
+
+| 键               | 类型                               | 默认值     | 含义                                                                                                                                                                              |
+| ---------------- | ---------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`        | boolean                            | `true`     | 为 `false` 时插件仍会加载,但绝不拉起或连接 broker;除 `status` 外的所有 action 都返回明确的禁用提示。                                                                              |
+| `inboundTrigger` | `"always" \| "replies" \| "never"` | `"always"` | 入站 broker 消息是否可以唤醒 session 产生新 turn:`"always"` 每条消息都唤醒;`"replies"` 仅当消息是对本 session 所发消息的回复时唤醒;`"never"` 只把消息作为上下文排队,不触发 turn。 |
+| `replyHint`      | boolean                            | `true`     | 在期待回复的入站消息后附上 `intercom({ action: "reply" ... })` 提示。                                                                                                             |
+| `status`         | string                             | ——         | 附加在自动 `idle`/`thinking` 状态后的自定义后缀,展示给对端(如 `"idle · on-call"`)。                                                                                               |
+| `confirmSend`    | boolean                            | `false`    | 仅为兼容 pi-intercom 配置而接受该键,但**不生效(no-op)**:dsh 宿主层的工具审批流程就是等价的确认闸门,插件不会自行弹出确认框。                                                       |
+
+示例:
 
 ```json
 {
@@ -60,25 +71,34 @@ session 重连时投递。`DSH_INTERCOM_ASK_TIMEOUT_MS` 可覆盖默认 10 分�
 }
 ```
 
-- `enabled`(默认 `true`)—— 为 `false` 时插件仍会加载,但不会连接 broker,工具会返回明确的禁用提示。
-- `inboundTrigger` —— `"always"`(默认)每条入站消息都会唤醒 session;`"replies"` 仅当消息是
-  对本 session 所发消息的回复时唤醒;`"never"` 只把入站消息作为上下文排队,不触发新 turn。
-- `replyHint`(默认 `true`)—— 在期待回复的入站消息后附上 `intercom({ action: "reply" ... })` 提示。
-- `status` —— 附加在自动 `idle`/`thinking` 状态后的自定义后缀,展示给对端。
-- `confirmSend` —— 仅为兼容 pi-intercom 配置而接受该键,但**不生效(no-op)**:dsh 宿主层的
-  工具审批流程就是等价的确认闸门,插件不会自行弹出确认框。
-
 配置文件损坏时插件 fail-closed:除 `inboundTrigger: "never"` 外全部使用默认值,并记录警告日志。
+配置在**插件加载时读取一次**——之后修改 `config.json` 需重启 dsh 才生效。
 
 ## 安装
 
-> 尚未发布。发布后将支持:
+> 尚未发布到 GitHub。仓库公开后将支持:
 >
 > ```
 > dsh plugin add github:<owner>/dsh-intercom
 > ```
+>
+> `lib/` 构建产物会提交进仓库,因此 GitHub 安装无需任何构建步骤 —— 其组合方式与下文的
+> tarball 安装完全一致(由 `pnpm test:install` 端到端验证)。
 
-本地检出的挂载方式见下文「本地开发」。
+### 从 tarball 安装
+
+GitHub 安装的本地等价物,全程针对临时 `DSH_HOME` 验证(绝不触碰真实的 `~/.dsh`):
+
+```bash
+pnpm build
+pnpm pack --pack-destination "$(mktemp -d)"   # 产出 dsh-intercom-<version>.tgz
+export DSH_HOME="$(mktemp -d)"                # 临时 home(Git Bash 语法)
+dsh plugin --profile web add /path/to/dsh-intercom-<version>.tgz
+dsh --profile web --dump-config | grep dsh-intercom   # 验证组合后的插件行
+```
+
+tarball 只包含 `lib/`、`cordis.patch.yml`、`package.json`、`README*`、`LICENSE` 和
+`NOTICE` —— 不含源码与测试。本地检出的挂载方式见下文「本地开发」。
 
 ## 开发
 
@@ -119,7 +139,19 @@ dsh web                                    # 带插件启动
 `dsh` 进程**(配合各自的脚本化 mock LLM,不消耗真实 API key),覆盖:跨进程 roster 发现、
 跨进程 `send` 唤醒对端、`ask` 阻塞直到对端 `reply` 解锁、对端进程被杀后 `ask` 立即失败、
 `send` 进入 mailbox,以及同名同目录 worker 重启后收到排队消息。
-详见 [tests/e2e/README.md](tests/e2e/README.md)。
+详见 [tests/e2e/README.md](tests/e2e/README.md)。`pnpm test:install`(同样不在
+`pnpm test` 中)运行安装预览:打包 tarball、检查产物清单、用真实 dsh CLI 把它装进临时
+`DSH_HOME`,并无头启动验证插件模块能真正加载。
+
+## 已知限制
+
+- **仅限同一台机器。** 发现与投递都走以 `$DSH_HOME/intercom` 为键的本地 socket
+  (unix socket 或 Windows 命名管道),没有跨主机传输。
+- **仅支持纯文本消息。** attachment(file/snippet/context)虽存在于 vendored 协议类型中,
+  但工具暂不接收也不渲染。
+- **`confirmSend` 不生效**(见配置表)。
+- **暂无 UI 面板。** 交互完全通过 `intercom` 工具进行;Web UI slot 面板计划在 M4,
+  也没有 TUI overlay。
 
 ## 许可证
 

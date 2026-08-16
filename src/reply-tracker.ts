@@ -198,6 +198,7 @@ export class ReplyTracker {
 
   listPending(now = Date.now()): IntercomContext[] {
     this.pruneExpired(now);
+    // oxlint-disable-next-line no-array-sort -- tsconfig lib is ES2022; toSorted is unavailable
     return Array.from(this.pendingAsks.values()).sort(
       (a: IntercomContext, b: IntercomContext) => a.receivedAt - b.receivedAt,
     );
