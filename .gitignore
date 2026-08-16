@@ -30,3 +30,6 @@ reference/
 # NOTE: lib/ (build output) is intentionally NOT ignored — dsh installs
 # plugins straight from GitHub without a build step, so artifacts are
 # committed and CI verifies they match the sources.
+
+# e2e scratch state
+tests/e2e/.tmp/

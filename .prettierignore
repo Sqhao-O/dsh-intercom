@@ -4,3 +4,4 @@ node_modules/
 coverage/
 pnpm-lock.yaml
 CHANGELOG.md
+tests/e2e/.tmp/

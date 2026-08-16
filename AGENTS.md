@@ -20,9 +20,15 @@ Bailon) — attribution lives in `NOTICE`.
   minimal and record adaptations in `NOTICE`.
 - `types.ts`, `cwd.ts` — vendored shared protocol types and the same-directory
   helper used by the broker.
-- `src/` — (planned, M1+) the dsh/Cordis plugin shell. Does not exist yet.
-- `tests/` — cross-module tests that are not part of the vendored set
-  (currently `tests/smoke.mjs`, an end-to-end check of the compiled broker).
+- `src/` — the dsh/Cordis plugin shell (M1): named-export entry (`index.ts`),
+  in-memory session registry (`registry.ts`), pure message formatting
+  (`message.ts`), the `MessageSourceMap` merge for the `intercom` relay kind
+  (`source.ts`), the `intercom` tool (`tool.ts`), and the transport layer
+  (`transport/types.ts` interface + `transport/local.ts` same-process direct
+  delivery; the cross-process `BrokerTransport` is M2).
+- `tests/` — cross-module tests that are not part of the vendored set:
+  `tests/smoke.mjs` (compiled broker), `tests/*.test.ts` (plugin unit tests),
+  `tests/e2e/` (real-dsh end-to-end, see its README).
 - `lib/` — **committed build output** (see below).
 
 ### Runtime layout
@@ -41,7 +47,8 @@ Bailon) — attribution lives in `NOTICE`.
 ```bash
 pnpm install     # also installs git hooks (simple-git-hooks)
 pnpm build       # tsdown → lib/ (ESM, one file per source file)
-pnpm test        # tsx --test over all *.test.ts
+pnpm test        # tsx --test over broker/cwd/plugin unit tests
+pnpm test:e2e    # real-dsh end-to-end (tests/e2e/; needs pnpm build + global dsh)
 pnpm lint        # oxlint
 pnpm format      # prettier --write
 pnpm typecheck   # tsc --noEmit (strict, NodeNext)
@@ -52,8 +59,8 @@ pnpm changeset   # add a changeset
 
 1. **`lib/` is committed.** dsh installs plugins from GitHub without a build
    step, so build artifacts ship in the repo. After changing any source under
-   `broker/` (or `types.ts`/`cwd.ts`), run `pnpm build` and commit the updated
-   `lib/`. CI enforces this with `git diff --exit-code lib/`.
+   `broker/` or `src/` (or `types.ts`/`cwd.ts`), run `pnpm build` and commit
+   the updated `lib/`. CI enforces this with `git diff --exit-code lib/`.
 2. **`reference/` is never committed.** It holds a local clone of upstream
    pi-intercom for comparison only (gitignored).
 3. **Conventional Commits** for commit messages and PR titles (commitlint).

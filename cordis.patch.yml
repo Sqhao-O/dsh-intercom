@@ -1,0 +1,12 @@
+# dsh-intercom bundle patch: mounted when a profile installs this package as a
+# dsh bundle (`dsh plugin add github:.../dsh-intercom` / `link:...`). The loader
+# composes this layer into the profile tree; the row below is all the plugin
+# needs — a Cordis plugin module with named exports (name/inject/apply).
+#
+# `inject` gates startup until the Agent registry and Tool registry services
+# exist; both are core services provided by every dsh app profile.
+
+- insert:
+    - id: dsh-intercom
+      name: dsh-intercom
+      inject: [agents, tools]
