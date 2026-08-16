@@ -20,15 +20,23 @@ Bailon) — attribution lives in `NOTICE`.
   minimal and record adaptations in `NOTICE`.
 - `types.ts`, `cwd.ts` — vendored shared protocol types and the same-directory
   helper used by the broker.
-- `src/` — the dsh/Cordis plugin shell (M1): named-export entry (`index.ts`),
+- `src/` — the dsh/Cordis plugin shell: named-export entry (`index.ts`),
   in-memory session registry (`registry.ts`), pure message formatting
   (`message.ts`), the `MessageSourceMap` merge for the `intercom` relay kind
-  (`source.ts`), the `intercom` tool (`tool.ts`), and the transport layer
-  (`transport/types.ts` interface + `transport/local.ts` same-process direct
-  delivery; the cross-process `BrokerTransport` is M2).
+  (`source.ts`), the `intercom` tool (`tool.ts`: `list` / `list-cwd` / `send`
+  / `ask` / `reply` / `pending` / `status` / `cancel` / `name`), config
+  loading (`config.ts`, `$DSH_HOME/intercom/config.json`, malformed →
+  fail-closed), the reply tracker (`reply-tracker.ts`, ported from
+  pi-intercom), and the transport layer (`transport/types.ts` interface,
+  `transport/local.ts` same-process direct delivery used as fallback,
+  `transport/broker.ts` cross-process delivery — one `IntercomClient` per
+  registered agent, auto-spawning the broker, with reconnect backoff,
+  receipts, dedup, and the reply waiter).
 - `tests/` — cross-module tests that are not part of the vendored set:
-  `tests/smoke.mjs` (compiled broker), `tests/*.test.ts` (plugin unit tests),
-  `tests/e2e/` (real-dsh end-to-end, see its README).
+  `tests/smoke.mjs` (compiled broker), `tests/*.test.ts` (plugin unit tests;
+  `tests/intercom.integration.test.ts` runs the tool + BrokerTransport and a
+  ported pi-intercom broker protocol suite against a real broker spawned from
+  source), `tests/e2e/` (real-dsh cross-process end-to-end, see its README).
 - `lib/` — **committed build output** (see below).
 
 ### Runtime layout

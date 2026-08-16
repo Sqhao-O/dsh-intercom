@@ -16,6 +16,13 @@ declare module "@deepseek-ai/dsh-llm" {
       form: "relay";
       /** Session id of the agent that sent the message. */
       senderSessionId: string;
+      /**
+       * Broker message id, set on messages that arrived through the
+       * cross-process broker. Lets the plugin correlate the durable
+       * `session/event` log entry with the pending ask (reply turn context)
+       * and with pending wake deliveries (lost-wake watchdog).
+       */
+      messageId?: string;
     };
   }
 }

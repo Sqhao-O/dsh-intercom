@@ -11,6 +11,19 @@ The following files are vendored (copied and adapted) from pi-intercom:
 - `types.ts`, `cwd.ts` (and `cwd.test.ts`) — shared protocol types and the
   same-directory helper
 
+The following files are ported (rewritten against the dsh/Cordis host) from
+pi-intercom:
+
+- `src/config.ts` — from upstream `config.ts`; malformed config fails closed
+  (`inboundTrigger: "never"`) instead of throwing, and `confirmSend` is a
+  documented no-op (dsh's host-level tool-approval flow is the equivalent)
+- `src/reply-tracker.ts` — from upstream `reply-tracker.ts`;
+  `activateTurnContext` is a dsh addition driven by `agent/inbox/claimed`
+- `tests/reply-tracker.test.ts`, `tests/config.test.ts`,
+  `tests/intercom.integration.test.ts` — from the corresponding upstream
+  tests; integration parts exercising non-vendored pi modules (pi extension
+  harness, subagent supervisor, tmux, TUI overlays, extension bus) are dropped
+
 Adaptations relative to upstream:
 
 - Environment variables renamed: `PI_CODING_AGENT_DIR` → `DSH_HOME`,

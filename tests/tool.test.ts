@@ -2,14 +2,28 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
+import type { IntercomConfig } from "../src/config.ts";
 import { SessionRegistry } from "../src/registry.ts";
 import { createIntercomTool } from "../src/tool.ts";
+import { BrokerTransport } from "../src/transport/broker.ts";
 import type {
   DeliveryResult,
   IntercomMessage,
   Transport,
 } from "../src/transport/types.ts";
 import { fakeAgent } from "./registry.test.ts";
+
+const defaultConfig: IntercomConfig = {
+  enabled: true,
+  inboundTrigger: "always",
+  replyHint: true,
+  confirmSend: false,
+};
+
+/** A broker transport with no attached sessions → every action falls back local. */
+function unattachedBroker(config: IntercomConfig = defaultConfig) {
+  return new BrokerTransport({ config, aliasOf: () => undefined });
+}
 
 /** Fake transport recording deliveries. */
 function recordingTransport(path: DeliveryResult["path"] = "followup") {
@@ -52,7 +66,12 @@ function setup() {
   registry.add(worker);
   registry.alias(worker, "worker");
   const { transport, sent } = recordingTransport();
-  const tool = createIntercomTool({ registry, transport });
+  const tool = createIntercomTool({
+    registry,
+    local: transport,
+    broker: unattachedBroker(),
+    config: defaultConfig,
+  });
   return { registry, self, worker, sent, tool };
 }
 
@@ -150,7 +169,12 @@ test("send reports steer when the target is busy", async () => {
   registry.add(busy);
   registry.alias(busy, "busy");
   const { transport } = recordingTransport("steer");
-  const tool = createIntercomTool({ registry, transport });
+  const tool = createIntercomTool({
+    registry,
+    local: transport,
+    broker: unattachedBroker(),
+    config: defaultConfig,
+  });
   const out = (await tool.execute(
     { action: "send", to: "busy", message: "ping" },
     execFor(self),
@@ -158,14 +182,42 @@ test("send reports steer when the target is busy", async () => {
   assert.match(out, /via steer/);
 });
 
-test("status reports the transport and live session count", async () => {
+test("status reports the local fallback transport and live session count", async () => {
   const { self, tool } = setup();
   const out = (await tool.execute(
     { action: "status" },
     execFor(self),
   )) as string;
-  assert.match(out, /transport local/);
+  assert.match(out, /local fallback/);
   assert.match(out, /Live sessions in this process: 2/);
+});
+
+test("a disabled plugin answers every action but status with a clear message", async () => {
+  const registry = new SessionRegistry();
+  const self = fakeAgent("self-12345678");
+  registry.add(self);
+  const config: IntercomConfig = { ...defaultConfig, enabled: false };
+  const { transport } = recordingTransport();
+  const tool = createIntercomTool({
+    registry,
+    local: transport,
+    broker: unattachedBroker(config),
+    config,
+  });
+  await assert.rejects(
+    tool.execute({ action: "list" }, execFor(self)),
+    /dsh-intercom is disabled/,
+  );
+  await assert.rejects(
+    tool.execute({ action: "send", to: "x", message: "hi" }, execFor(self)),
+    /dsh-intercom is disabled/,
+  );
+  const status = (await tool.execute(
+    { action: "status" },
+    execFor(self),
+  )) as string;
+  assert.match(status, /enabled=false/);
+  assert.match(status, /disabled/);
 });
 
 test("unknown actions and agent-less executions fail loudly", async () => {

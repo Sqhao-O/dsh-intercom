@@ -25,7 +25,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "test": "tsx --test broker/ask-timeout.test.ts broker/client.test.ts broker/client-liveness.test.ts broker/extension.test.ts broker/framing.test.ts broker/paths.test.ts broker/runtime-claim.test.ts broker/spawn.test.ts cwd.test.ts tests/registry.test.ts tests/message.test.ts tests/transport-local.test.ts tests/tool.test.ts",
+    "test": "tsx --test broker/ask-timeout.test.ts broker/client.test.ts broker/client-liveness.test.ts broker/extension.test.ts broker/framing.test.ts broker/paths.test.ts broker/runtime-claim.test.ts broker/spawn.test.ts cwd.test.ts tests/config.test.ts tests/registry.test.ts tests/message.test.ts tests/reply-tracker.test.ts tests/transport-local.test.ts tests/tool.test.ts tests/tool-broker.test.ts tests/intercom.integration.test.ts",
     "test:e2e": "tsx tests/e2e/run.ts",
     "lint": "oxlint",
     "format": "prettier --write .",

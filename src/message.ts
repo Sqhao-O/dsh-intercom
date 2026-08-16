@@ -13,23 +13,35 @@ export interface IntercomSender {
   readonly cwd: string | undefined;
 }
 
+/** Options shaping the reply hint of an inbound message. */
+export interface InboundFormatOptions {
+  /** The sender asked for a reply (blocking `ask`). */
+  readonly expectsReply?: boolean;
+  /** Config `replyHint` (default true): show the `reply` action for asks. */
+  readonly replyHint?: boolean;
+}
+
 /**
  * Render the markdown body of an inbound intercom message.
  *
- * The reply hint deliberately references `send` (not `reply`): blocking
- * ask/reply is M2; for M1 the addressed session answers with an ordinary send
- * back to the sender's alias or id.
+ * A message that expects a reply gets the `reply`-action hint (when the
+ * `replyHint` config is on); every other message gets the ordinary `send`
+ * hint addressed back to the sender's alias or id.
  */
 export function formatIntercomMessage(
   sender: IntercomSender,
   body: string,
+  options: InboundFormatOptions = {},
 ): string {
   const origin = sender.cwd
     ? `**From ${sender.display}** (${sender.cwd})`
     : `**From ${sender.display}**`;
-  const hint = `To reply, use the intercom tool: intercom({ action: "send", to: ${JSON.stringify(
-    sender.address,
-  )}, message: "..." })`;
+  const replyHint = options.expectsReply && (options.replyHint ?? true);
+  const hint = replyHint
+    ? `To reply, use the intercom tool: intercom({ action: "reply", message: "..." })`
+    : `To reply, use the intercom tool: intercom({ action: "send", to: ${JSON.stringify(
+        sender.address,
+      )}, message: "..." })`;
   return `${origin}\n\n${hint}\n\n${body}`;
 }
 
@@ -64,4 +76,31 @@ export function formatSessionList(
   if (sections.length === 0)
     return "No live dsh sessions found in this process.";
   return sections.join("\n\n");
+}
+
+/**
+ * Unique leading id prefixes for a roster (ported from pi-intercom): at least
+ * 8 chars, extended past any shared prefix, and never cutting through a
+ * hyphen-separated group.
+ */
+export function sessionIdPrefixes(ids: readonly string[]): Map<string, string> {
+  const prefixes = new Map<string, string>();
+  for (const id of ids) {
+    let longestSharedPrefix = 0;
+    for (const other of ids) {
+      if (other === id) {
+        continue;
+      }
+      let length = 0;
+      while (length < id.length && id[length] === other[length]) {
+        length += 1;
+      }
+      longestSharedPrefix = Math.max(longestSharedPrefix, length);
+    }
+    const minimumLength = Math.max(8, longestSharedPrefix + 1);
+    const groupBoundary = id.indexOf("-", minimumLength);
+    const length = groupBoundary === -1 ? minimumLength : groupBoundary;
+    prefixes.set(id, id.slice(0, length));
+  }
+  return prefixes;
 }

@@ -1,19 +1,25 @@
 /**
- * dsh-intercom e2e runner plugin. Mounted into a scratch headless profile via
- * `dsh --profile headless --patch <generated>` (see run.ts, which also starts
- * the mock LLM this scenario is scripted against).
+ * dsh-intercom e2e runner plugin (M2: cross-process). Mounted into a scratch
+ * headless profile via `dsh --profile headless --patch <generated>`; see
+ * run.ts, which spawns TWO separate dsh processes sharing one scratch
+ * DSH_HOME (so both discover the same auto-spawned socket broker) plus a
+ * relaunch of the worker process for the mailbox phase.
  *
- * Scenario (all inside one real dsh process):
- *   1. Create two agents, "planner" and "worker", through ctx.agents.create.
- *   2. Name both sessions by executing the registered `intercom` tool
- *      definition (the `name` action) on their behalf.
- *   3. Give the planner a task; the mock LLM is scripted to answer with a
- *      tool call `intercom({action:"send", to:"worker", message:...})`, so the
- *      send goes through the real tool pipeline (model tool call → tool
- *      registry dispatch → LocalTransport → worker inbox).
- *   4. Assert delivery: planner logged a successful tool result, the worker's
- *      session log contains the injected relay user/message, and the worker
- *      started a new turn after the injection.
+ * Roles (E2E_ROLE) and phases (E2E_PHASE):
+ *   - planner (proc A, phase main): names itself, waits until "worker" is
+ *     visible via `list` (broker roster across processes), runs a scripted
+ *     turn whose mock LLM emits intercom({action:"send", to:"worker"}),
+ *     receives the worker's ask, answers it by driving the tool's `reply`
+ *     action directly, then — once the worker process has died — verifies a
+ *     blocking `ask` fails immediately and a `send` queues in the mailbox.
+ *     Finally it waits for the relaunched worker to reappear (keeping one
+ *     live session so the broker does not idle-exit and lose the mailbox).
+ *   - worker (proc B, phase main): names itself, waits for "planner", gets
+ *     woken by the relayed send, and its scripted mock turn calls
+ *     intercom({action:"ask", to:"planner"}) which genuinely blocks until the
+ *     planner's reply unblocks it.
+ *   - worker (proc B2, phase reconnect): same session id, alias and cwd; the
+ *     broker flushes the queued mailbox message on registration.
  *
  * Plain .mjs: the dsh Loader imports this file URL directly (no build step).
  */
@@ -24,8 +30,17 @@ import { SessionId } from "@deepseek-ai/dsh-session";
 export const name = "dsh-intercom-e2e-runner";
 export const inject = ["agents", "agentDefaultModel", "tools"];
 
-const BODY = "hello from planner";
-const TIMEOUT_MS = 120_000;
+const ROLE = process.env.E2E_ROLE ?? "planner";
+const PHASE = process.env.E2E_PHASE ?? "main";
+const SESSION_ID = `e2e-${ROLE}`;
+const ALIAS = ROLE;
+const PEER_ALIAS = ROLE === "planner" ? "worker" : "planner";
+const SEND_BODY = "hello from planner";
+const ASK_BODY = "what is the status?";
+const REPLY_BODY = "planner reply: all good";
+const QUEUED_BODY = "queued after disconnect";
+const TIMEOUT_MS = 100_000;
+const tag = `[e2e:${ROLE}${PHASE === "reconnect" ? ":reconnect" : ""}]`;
 
 function exit(ctx, code) {
   const appExit = ctx.get("appExit");
@@ -33,11 +48,7 @@ function exit(ctx, code) {
   else process.exit(code);
 }
 
-function textOf(content) {
-  return JSON.stringify(content);
-}
-
-const out = (line) => process.stdout.write(`[e2e] ${line}\n`);
+const out = (line) => process.stdout.write(`${tag} ${line}\n`);
 
 const exec = (agent) => ({
   callId: `e2e-${Math.random().toString(36).slice(2)}`,
@@ -46,6 +57,16 @@ const exec = (agent) => ({
   agent,
   signal: new AbortController().signal,
 });
+
+async function poll(label, predicate, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await predicate();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting: ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
 
 async function run(ctx) {
   const fail = (line) => {
@@ -65,28 +86,63 @@ async function run(ctx) {
 
   const selection = ctx.agentDefaultModel.currentSelection();
   const cwd = process.cwd();
-  const createAgent = (id) =>
-    ctx.agents.create({
-      sessionId: SessionId(id),
-      meta: { cwd },
-      agentOptions: { provider: selection.provider, model: selection.model },
-      setup: (agentCtx) => {
-        installModelSelection(agentCtx, {
-          current: selection,
-          assembled: undefined,
-        });
-      },
+  const agentOptions = { provider: selection.provider, model: selection.model };
+  const setup = (agentCtx) => {
+    installModelSelection(agentCtx, {
+      current: selection,
+      assembled: undefined,
     });
+  };
+  // The reconnect phase relaunches the worker against the same DSH_HOME where
+  // its first incarnation's session log persists: creating a fresh agent with
+  // the same session id is rejected (id collision), so resume it instead —
+  // this mirrors a real dsh restart in the same directory, and the broker
+  // mailbox matches the resumed registration by session id.
+  const created =
+    PHASE === "reconnect"
+      ? await ctx.agents.resume({
+          resumeSessionId: SessionId(SESSION_ID),
+          agentOptions,
+          setup,
+        })
+      : await ctx.agents.create({
+          sessionId: SessionId(SESSION_ID),
+          meta: { cwd },
+          agentOptions,
+          setup,
+        });
+  const agent = created.agent;
+  out(`agent ${PHASE === "reconnect" ? "resumed" : "created"}: ${SESSION_ID}`);
 
-  const worker = await createAgent("e2e-worker");
-  const planner = await createAgent("e2e-planner");
-  out("agents created: e2e-planner, e2e-worker");
+  const named = await tool.execute(
+    { action: "name", alias: ALIAS },
+    exec(agent),
+  );
+  if (typeof named !== "string" || !named.includes(`"${ALIAS}"`)) {
+    return fail(`name action failed: ${named}`);
+  }
+  out(`alias set: ${ALIAS}`);
 
-  await tool.execute({ action: "name", alias: "worker" }, exec(worker.agent));
-  await tool.execute({ action: "name", alias: "planner" }, exec(planner.agent));
-  out("aliases set via the intercom tool: planner, worker");
+  // Scenario 1: the peer is visible in the broker roster across processes.
+  await poll(`peer ${PEER_ALIAS} in roster`, async () => {
+    const listed = await tool.execute({ action: "list" }, exec(agent));
+    return typeof listed === "string" && listed.includes(PEER_ALIAS);
+  });
+  out(`scenario 1 ok: ${PEER_ALIAS} visible via cross-process list`);
 
-  planner.agent.followup(
+  if (ROLE === "planner" && PHASE === "main") {
+    return runPlannerMain(ctx, tool, agent, fail);
+  }
+  if (ROLE === "worker" && PHASE === "main") {
+    return runWorkerMain(ctx, tool, agent, fail);
+  }
+  return runWorkerReconnect(ctx, tool, agent, fail);
+}
+
+async function runPlannerMain(ctx, tool, agent, fail) {
+  // Scenario 2: scripted turn → intercom send to the worker (real tool
+  // pipeline: model tool call → dispatch → broker → peer process).
+  agent.followup(
     createUserMessage({
       content: [
         { type: "text", text: "Send a greeting to the worker session." },
@@ -94,47 +150,146 @@ async function run(ctx) {
       source: { kind: "user" },
     }),
   );
-  await planner.agent.whenIdle();
-  out("planner turn settled");
-  await worker.agent.whenIdle();
-  out("worker turn settled");
-
-  // (a) the planner's log holds a successful intercom tool result.
-  const plannerResult = planner.agent.session.events.find(
+  await agent.whenIdle();
+  const sendResult = agent.session.events.find(
     (event) =>
       event.type === "tool/result" &&
       !event.data.error &&
-      textOf(event.data.message).includes("Delivered"),
+      JSON.stringify(event.data.message).includes("Message sent to worker"),
   );
-  if (!plannerResult)
-    return fail(
-      "planner log has no successful intercom tool result reporting delivery",
-    );
-  out("assertion a ok: planner tool result reports delivery");
+  if (!sendResult)
+    return fail("planner log has no successful send tool result");
+  out("scenario 2 ok: send crossed processes through the broker");
 
-  // (b) the worker's log holds the injected relay message from the planner.
-  const relay = worker.agent.session.events.find(
+  // Scenario 3 (planner half): the worker's ask arrives as a relay, wakes the
+  // planner, and the reply is driven through the tool's reply action.
+  await poll("inbound ask relay in planner log", () =>
+    agent.session.events.find(
+      (event) =>
+        event.type === "user/message" &&
+        event.data.source?.kind === "intercom" &&
+        JSON.stringify(event.data.content).includes(ASK_BODY),
+    ),
+  );
+  await agent.whenIdle();
+  const replyOut = await tool.execute(
+    { action: "reply", message: REPLY_BODY },
+    exec(agent),
+  );
+  if (replyOut !== "Reply sent to worker") {
+    return fail(`reply action failed: ${replyOut}`);
+  }
+  out("scenario 3 ok: answered the worker's ask via the reply action");
+
+  // Scenario 4 (planner half): once the worker process is gone, a blocking
+  // ask fails immediately and a send queues in the broker mailbox.
+  await poll("worker leaving the roster", async () => {
+    const listed = await tool.execute({ action: "list" }, exec(agent));
+    return typeof listed === "string" && !listed.includes("worker (");
+  });
+  out("worker process left the roster");
+
+  const askError = await tool
+    .execute(
+      { action: "ask", to: "worker", message: "still there?" },
+      exec(agent),
+    )
+    .then(
+      (value) => `unexpected success: ${value}`,
+      (error) => String(error instanceof Error ? error.message : error),
+    );
+  if (!/not currently connected/.test(askError)) {
+    return fail(`ask to a dead peer did not fail immediately: ${askError}`);
+  }
+  out("scenario 4a ok: ask to a disconnected peer fails immediately");
+
+  const queuedOut = await tool.execute(
+    { action: "send", to: "worker", message: QUEUED_BODY },
+    exec(agent),
+  );
+  if (queuedOut !== "Message sent to worker") {
+    return fail(`send to a dead peer did not queue: ${queuedOut}`);
+  }
+  out("scenario 4b ok: send queued in the broker mailbox");
+
+  // Keep this session alive (so the broker does not idle-exit and drop the
+  // mailbox) until the relaunched worker registers and receives the queue.
+  await poll("relaunched worker in roster", async () => {
+    const listed = await tool.execute({ action: "list" }, exec(agent));
+    return typeof listed === "string" && listed.includes("worker (");
+  });
+  out("scenario 4c ok: relaunched worker re-registered across processes");
+
+  out("PASS");
+  exit(ctx, 0);
+}
+
+async function runWorkerMain(ctx, tool, agent, fail) {
+  // Scenario 2 (worker half): the planner's relayed send wakes this idle
+  // agent; the scripted mock turn answers with a blocking intercom ask.
+  const relay = await poll("planner relay in worker log", () =>
+    agent.session.events.find(
+      (event) =>
+        event.type === "user/message" &&
+        event.data.source?.kind === "intercom" &&
+        event.data.source.senderSessionId === "e2e-planner" &&
+        JSON.stringify(event.data.content).includes(SEND_BODY),
+    ),
+  );
+  out("scenario 2 ok: relay arrived from the planner process");
+
+  // The wake turn's ask blocks until the planner replies (scenario 3).
+  await agent.whenIdle();
+  const askResult = agent.session.events.find(
     (event) =>
-      event.type === "user/message" &&
-      event.data.source?.kind === "intercom" &&
-      event.data.source.senderSessionId === "e2e-planner" &&
-      textOf(event.data.content).includes(BODY),
+      event.type === "tool/result" &&
+      !event.data.error &&
+      JSON.stringify(event.data.message).includes(REPLY_BODY),
   );
-  if (!relay)
-    return fail(
-      "worker log has no injected intercom relay message with the body",
-    );
-  out("assertion b ok: worker log holds the relay user/message");
-
-  // (c) the injection woke the worker: it answered after the relay event.
-  // (turn/start precedes user/message in the log — the claimed message is
-  // appended inside its turn — so the observable proof is the reply itself.)
-  const reply = worker.agent.session.events.find(
+  if (!askResult) {
+    return fail("worker log has no ask tool result carrying the planner reply");
+  }
+  const woke = agent.session.events.find(
     (event) => event.type === "assistant/message" && event.seq > relay.seq,
   );
-  if (!reply) return fail("worker never answered after the injection");
+  if (!woke) return fail("worker never produced a turn after the relay");
   out(
-    "assertion c ok: worker produced an assistant reply in a turn after the injection",
+    "scenario 3 ok: ask blocked across processes and unblocked with the reply",
+  );
+
+  out("PASS");
+  exit(ctx, 0);
+}
+
+async function runWorkerReconnect(ctx, tool, agent, fail) {
+  // Scenario 4 (worker half): same session id + alias + cwd as the dead
+  // worker, so the broker flushes the queued mailbox message on register.
+  let relay;
+  try {
+    relay = await poll("queued mailbox relay in worker log", () =>
+      agent.session.events.find(
+        (event) =>
+          event.type === "user/message" &&
+          event.data.source?.kind === "intercom" &&
+          JSON.stringify(event.data.content).includes(QUEUED_BODY),
+      ),
+    );
+  } catch (error) {
+    const status = await tool
+      .execute({ action: "status" }, exec(agent))
+      .catch((e) => String(e));
+    out(
+      `debug: status=${JSON.stringify(status)} events=${JSON.stringify(agent.session.events.map((e) => e.type))}`,
+    );
+    throw error;
+  }
+  await agent.whenIdle();
+  const woke = agent.session.events.find(
+    (event) => event.type === "assistant/message" && event.seq > relay.seq,
+  );
+  if (!woke) return fail("queued message did not wake the relaunched worker");
+  out(
+    "scenario 4d ok: queued mailbox message delivered and answered after reconnect",
   );
 
   out("PASS");
@@ -142,15 +297,25 @@ async function run(ctx) {
 }
 
 export function apply(ctx) {
+  ctx.on(
+    "agent/error",
+    (payload) => {
+      const error = payload?.error ?? payload;
+      out(
+        `debug agent/error: ${error instanceof Error ? (error.stack ?? error.message) : JSON.stringify(payload)}`,
+      );
+    },
+    { global: true },
+  );
   const timer = setTimeout(() => {
-    process.stdout.write("[e2e] FAIL timeout waiting for the scenario\n");
+    process.stdout.write(`${tag} FAIL timeout waiting for the scenario\n`);
     exit(ctx, 2);
   }, TIMEOUT_MS);
   void run(ctx)
     .then(() => clearTimeout(timer))
     .catch((error) => {
       process.stdout.write(
-        `[e2e] FAIL ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+        `${tag} FAIL ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
       );
       exit(ctx, 1);
     });

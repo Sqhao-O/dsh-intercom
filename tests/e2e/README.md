@@ -1,55 +1,61 @@
 # dsh-intercom e2e
 
-`pnpm test:e2e` (not part of `pnpm test`) boots a **real dsh process** against
-the scripted mock LLM server and exercises the full intercom path. Requires a
-built `lib/` (`pnpm build` first) and a globally installed `dsh` (resolved from
-`npm root -g`, or point `DSH_BIN` at `.../@deepseek-ai/dsh/lib/bin.js`).
+`pnpm test:e2e` (not part of `pnpm test`) boots **multiple real dsh
+processes** against scripted mock LLM servers and exercises the cross-process
+intercom path end to end. Requires a built `lib/` (`pnpm build` first) and a
+globally installed `dsh` (resolved from `npm root -g`, or point `DSH_BIN` at
+`.../@deepseek-ai/dsh/lib/bin.js`).
 
 ## What runs
 
 `run.ts` (driver, in-process):
 
-1. Starts `@deepseek-ai/dsh-llm-mock-server` on an OS-assigned port, scripted
-   as `tool_call_success` (tool `intercom`, arguments
-   `{action:"send", to:"worker", message:"hello from planner"}`) for the first
-   model request and plain `success` for every later one.
-2. Creates a scratch `DSH_HOME` under `tests/e2e/.tmp/` (the real `~/.dsh` is
-   never touched) and generates `.tmp/e2e.patch.yml`: the LLM session titler
-   and the headless one-shot runner are disabled (the titler would consume mock
-   sequence entries; the runner demands a task positional), and both
-   `lib/src/index.js` (the plugin under test) and `runner-plugin.mjs` are
-   inserted by file URL.
-3. Spawns `node <dsh bin> --profile headless --patch <overlay>` with
-   `DEEPSEEK_BASE_URL` pointed at the mock (no API key needed).
+1. Starts two `@deepseek-ai/dsh-llm-mock-server` instances — one per process,
+   because request sequences are positional per server. The planner mock
+   answers its first request with `intercom({action:"send", to:"worker"})`,
+   the worker mock answers its first (relay-woken) request with
+   `intercom({action:"ask", to:"planner"})`; everything after is plain text.
+2. Creates a **per-run scratch `DSH_HOME`** under `tests/e2e/.tmp/` shared by
+   all child processes (broker discovery is keyed by the intercom state dir;
+   the real `~/.dsh` is never touched) and generates the patch overlay: the
+   LLM session titler and headless one-shot runner are disabled, and both
+   `lib/src/index.js` (plugin under test) and `runner-plugin.mjs` are inserted
+   by file URL.
+3. Spawns proc A (`E2E_ROLE=planner`) and, once A's runner is up, proc B
+   (`E2E_ROLE=worker`) — the stagger avoids a dsh profile-boot race on a fresh
+   shared `DSH_HOME`. The first process to attach an agent auto-spawns the
+   socket broker under the shared state dir; the second connects to it.
+4. After B reports PASS and exits, spawns proc B2 (`E2E_PHASE=reconnect`):
+   same session id, alias and cwd as B, against the same `DSH_HOME`.
 
-`runner-plugin.mjs` (scenario, inside the dsh process):
+`runner-plugin.mjs` (scenario, inside each dsh process) creates one agent
+through `ctx.agents.create`, names it via the tool's `name` action, and then:
 
-1. Creates two agents (`e2e-planner`, `e2e-worker`) through `ctx.agents.create`
-   using the profile's default model selection.
-2. Sets both aliases by executing the registered `intercom` tool definition
-   (`name` action) on each agent's behalf.
-3. Submits a user follow-up to the planner. The mock LLM answers with the
-   scripted `intercom` tool call, so the send travels the **real tool
-   pipeline**: model tool call → tool registry dispatch → `execute` →
-   `LocalTransport` → worker inbox.
+- **planner (A)**: waits for `worker` in the `list` roster; runs the scripted
+  send turn; waits for the worker's inbound ask and answers it by driving the
+  tool's `reply` action directly; once the worker process dies, verifies
+  `ask` fails immediately and `send` queues; keeps its session alive (so the
+  broker does not idle-exit and drop the mailbox) until the relaunched worker
+  re-registers.
+- **worker (B)**: waits for `planner` in the roster; the relayed send wakes it
+  and its scripted ask blocks until the planner's reply arrives.
+- **worker (B2, reconnect)**: the broker flushes the queued mailbox message on
+  registration; the relay wakes a turn.
 
 ## Assertions
 
-- **(a)** The planner's session log contains a `tool/result` event for the
-  intercom call with no error, reporting `Delivered to worker`.
-- **(b)** The worker's session log contains a `user/message` event whose source
-  is the merged `intercom` kind (`form: 'relay'`,
-  `senderSessionId: 'e2e-planner'`) and whose text includes the body.
-- **(c)** The injection woke the idle worker: its log contains an
-  `assistant/message` after the relay event (a new turn answered it; note the
-  claimed `user/message` is appended _inside_ its turn, so `turn/start`
-  precedes it in seq order).
+- **Scenario 1**: each process sees the other via `list` (broker roster across
+  processes).
+- **Scenario 2**: A's `send` tool result reports `Message sent to worker`;
+  B's session log holds the `user/message` relay (source kind `intercom`,
+  `senderSessionId: 'e2e-planner'`) containing the body.
+- **Scenario 3**: B's `ask` tool result contains the planner's reply text —
+  the ask genuinely blocked across processes until A's `reply` action ran.
+- **Scenario 4**: with B dead, A's `ask` fails immediately
+  (`not currently connected`), A's `send` reports queued delivery, and B2
+  (same alias + cwd) receives the queued message and answers it.
 
-The scenario prints `[e2e] PASS` and exits 0; the driver mirrors the child
-output and propagates the exit code. The runner self-times-out after 120 s and
-the driver kills the child after 170 s.
-
-## Not covered here (M2+)
-
-Cross-process delivery through the socket broker, `ask`/`reply`, the busy-peer
-`steer` path end to end (covered by unit tests in `tests/transport-local.test.ts`).
+Each runner prints `[e2e:<role>] PASS` and exits 0; the driver mirrors all
+child output, propagates exit codes, and kills any leftover broker keyed to
+the scratch home. Runners self-time-out after 100 s; the driver kills a child
+after 150 s.
