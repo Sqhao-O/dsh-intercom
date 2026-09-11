@@ -44,11 +44,11 @@ jobs:
         uses: changesets/action@v1
         with:
           # No npm publish: dsh plugins install from GitHub. Tagging the
-          # released versions is enough. changeset tag creates the tags
+          # released versions is enough. changeset git-tag creates the tags
           # locally (skipping versions already tagged) but never pushes
           # them, and action@v1 only auto-pushes tags it detects from
           # `changeset publish` output, so push the tags explicitly.
-          publish: pnpm exec changeset tag && git push --tags
+          publish: pnpm exec changeset git-tag && git push --tags
           commit: "chore: release"
           title: "chore: release"
         env:
