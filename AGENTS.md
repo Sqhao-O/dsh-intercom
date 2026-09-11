@@ -105,9 +105,12 @@ pnpm changeset   # add a changeset
 - Broker unit/integration tests live next to the sources in `broker/*.test.ts`
   and run on the TypeScript sources via tsx.
 - `broker/extension.test.ts` and `broker/abuse.test.ts` spawn a real broker
-  subprocess from source using the dev-dependency tsx CLI; `abuse.test.ts`
-  injects malformed frames, protocol violations, and rate-limit floods and
-  asserts the offending connection dies while the broker stays alive.
+  subprocess from source as a direct child via `node --import tsx` (tsx is a
+  dev dependency; the tsx CLI wrapper is avoided because it can swallow
+  SIGTERM on unix and orphan the broker); teardown escalates SIGTERM to
+  SIGKILL. `abuse.test.ts` injects malformed frames, protocol violations, and
+  rate-limit floods and asserts the offending connection dies while the broker
+  stays alive.
 - `tests/smoke.mjs` verifies the **compiled** artifact: it spawns
   `node lib/broker/broker.js` with `DSH_HOME` pointed at a temp dir and passes
   a message between two compiled clients. Run `pnpm build` first.

@@ -4,18 +4,17 @@
  *
  * Part A exercises the vendored broker/client modules directly (stable IDs,
  * ask edges, mailbox redelivery rules, presence coalescing) — the broker runs
- * from TypeScript source via the dev-dependency tsx CLI, like
- * broker/extension.test.ts. Parts exercising non-vendored pi modules (the pi
- * extension harness, subagent supervisor, tmux panes, TUI overlays, extension
- * bus) are dropped; the dsh plugin side is covered in Part B, which runs OUR
- * tool + BrokerTransport against the same real broker.
+ * from TypeScript source via `node --import tsx` (tsx is a dev dependency),
+ * like broker/extension.test.ts. Parts exercising non-vendored pi modules (the
+ * pi extension harness, subagent supervisor, tmux panes, TUI overlays,
+ * extension bus) are dropped; the dsh plugin side is covered in Part B, which
+ * runs OUR tool + BrokerTransport against the same real broker.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Agent } from "@deepseek-ai/dsh-agent";
@@ -40,26 +39,60 @@ process.on("exit", () => {
   rmSync(sharedHomeDir, { recursive: true, force: true });
 });
 
-const requireFromHere = createRequire(import.meta.url);
-const tsxCliPath = path.join(
-  path.dirname(requireFromHere.resolve("tsx")),
-  "cli.mjs",
-);
-
 type Client = InstanceType<typeof IntercomClient>;
 
-function registration(name: string, cwd: string = repoDir) {
-  return {
-    name,
-    cwd,
-    model: "test-model",
-    pid: process.pid,
-    startedAt: Date.now(),
-    lastActivity: Date.now(),
+/**
+ * Spawns the broker from source as a DIRECT child (`node --import tsx`)
+ * rather than through the tsx CLI wrapper. The wrapper sits between the test
+ * and the broker, and on unix a wedged wrapper can swallow SIGTERM while the
+ * broker grandchild lingers without ever listening — CI hung for hours on
+ * exactly that. A direct child answers SIGTERM itself, and stopBroker
+ * escalates to SIGKILL so teardown can never wait forever.
+ */
+function spawnBroker(): { broker: ChildProcess; brokerLog: () => string } {
+  const broker = spawn(
+    process.execPath,
+    ["--import", "tsx", path.join(repoDir, "broker", "broker.ts")],
+    {
+      cwd: repoDir,
+      env: { ...process.env, DSH_HOME: sharedHomeDir },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let captured = "";
+  const remember = (chunk: Buffer) => {
+    captured = (captured + chunk.toString()).slice(-8192);
   };
+  (broker.stdout as NodeJS.ReadableStream | null)?.on("data", remember);
+  (broker.stderr as NodeJS.ReadableStream | null)?.on("data", remember);
+  return { broker, brokerLog: () => captured };
 }
 
-async function waitForBrokerReady(broker: ChildProcess): Promise<void> {
+async function waitForBrokerExit(
+  broker: ChildProcess,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (broker.exitCode !== null || broker.signalCode !== null) {
+    return true;
+  }
+  return Promise.race([
+    once(broker, "exit").then(() => true),
+    new Promise<false>((resolve) => setTimeout(resolve, timeoutMs, false)),
+  ]);
+}
+
+async function stopBroker(broker: ChildProcess): Promise<void> {
+  if (await waitForBrokerExit(broker, 0)) return;
+  broker.kill("SIGTERM");
+  if (await waitForBrokerExit(broker, 2000)) return;
+  broker.kill("SIGKILL");
+  await waitForBrokerExit(broker, 2000);
+}
+
+async function waitForBrokerReady(
+  broker: ChildProcess,
+  brokerLog: () => string,
+): Promise<void> {
   const stdout = (broker as ChildProcess & { stdout?: unknown }).stdout;
   if (!stdout || typeof (stdout as { on?: unknown }).on !== "function") {
     throw new Error("Broker stdout is unavailable");
@@ -68,7 +101,9 @@ async function waitForBrokerReady(broker: ChildProcess): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error("Broker startup timed out"));
+      reject(
+        new Error(`Broker startup timed out; broker output:\n${brokerLog()}`),
+      );
     }, 10_000);
     const onData = (chunk: Buffer) => {
       if (chunk.toString().includes("Intercom broker started")) {
@@ -80,7 +115,7 @@ async function waitForBrokerReady(broker: ChildProcess): Promise<void> {
       cleanup();
       reject(
         new Error(
-          `Broker exited before startup (code=${code}, signal=${signal})`,
+          `Broker exited before startup (code=${code}, signal=${signal}); broker output:\n${brokerLog()}`,
         ),
       );
     };
@@ -95,18 +130,10 @@ async function waitForBrokerReady(broker: ChildProcess): Promise<void> {
 }
 
 async function setupClients() {
-  const broker = spawn(
-    process.execPath,
-    [tsxCliPath, path.join(repoDir, "broker", "broker.ts")],
-    {
-      cwd: repoDir,
-      env: { ...process.env, DSH_HOME: sharedHomeDir },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const { broker, brokerLog } = spawnBroker();
 
   try {
-    await waitForBrokerReady(broker);
+    await waitForBrokerReady(broker, brokerLog);
     const planner = new IntercomClient();
     const orchestrator = new IntercomClient();
 
@@ -119,15 +146,24 @@ async function setupClients() {
       cleanup: async () => {
         await planner.disconnect().catch(() => undefined);
         await orchestrator.disconnect().catch(() => undefined);
-        broker.kill("SIGTERM");
-        await once(broker, "exit").catch(() => undefined);
+        await stopBroker(broker);
       },
     };
   } catch (error) {
-    broker.kill("SIGTERM");
-    await once(broker, "exit").catch(() => undefined);
+    await stopBroker(broker);
     throw error;
   }
+}
+
+function registration(name: string, cwd: string = repoDir) {
+  return {
+    name,
+    cwd,
+    model: "test-model",
+    pid: process.pid,
+    startedAt: Date.now(),
+    lastActivity: Date.now(),
+  };
 }
 
 async function connectRawRegistered(sessionId: string, name: string) {
@@ -209,7 +245,7 @@ async function waitForNoSessionId(
 
 test(
   "broker accepts caller supplied stable IDs across reconnect",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const worker = new IntercomClient();
@@ -238,7 +274,7 @@ test(
 
 test(
   "broker resolves unique short IDs and rejects ambiguous prefixes",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
     const first = new IntercomClient();
@@ -279,7 +315,7 @@ test(
 
 test(
   "broker rejects unknown replyTo values instead of delivering forged replies",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
 
@@ -298,7 +334,7 @@ test(
 
 test(
   "broker refuses reverse mutual asks until the original ask is answered",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
 
@@ -343,7 +379,7 @@ test(
 
 test(
   "a reply can start a new reverse ask",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
 
@@ -378,7 +414,7 @@ test(
 
 test(
   "failed replies do not clear broker mutual-ask edges",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
 
@@ -427,7 +463,7 @@ test(
 
 test(
   "broker rejects blocking asks to disconnected targets",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
 
@@ -450,7 +486,7 @@ test(
 
 test(
   "broker queues replies to recently disconnected named senders",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
     const replacement = new IntercomClient();
@@ -500,7 +536,7 @@ test(
 
 test(
   "broker never remaps a disconnected mailbox back to the sending session",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const sender = new IntercomClient();
@@ -545,7 +581,7 @@ test(
 
 test(
   "broker keeps queued mail away from a same-name session in another cwd",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
     const otherProject = new IntercomClient();
@@ -598,7 +634,7 @@ test(
 
 test(
   "broker delivers queued mail to a relaunch reporting the same cwd differently",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, orchestrator, cleanup } = await setupClients();
     const replacement = new IntercomClient();
@@ -657,7 +693,7 @@ test(
 
 test(
   "broker coalesces no-op presence floods",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const worker = new IntercomClient();
@@ -685,7 +721,7 @@ test(
 
 test(
   "old stable-ID socket cannot mutate the replacement session",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const first = await connectRawRegistered(
@@ -731,7 +767,7 @@ test(
 
 test(
   "stable-ID replacement clears old ask edges and ignores stale cancels",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { orchestrator, cleanup } = await setupClients();
     const first = await connectRawRegistered(
@@ -899,7 +935,7 @@ async function setupPlugin(
 
 test(
   "plugin ask blocks until the peer replies through the real broker",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const { transport, tool, agent } = await setupPlugin();
@@ -933,7 +969,7 @@ test(
 
 test(
   "plugin receives an inbound ask via followup and answers it with reply",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const { transport, tool, agent, calls } = await setupPlugin({
@@ -988,7 +1024,7 @@ test(
 
 test(
   "plugin ask abort via exec.signal clears the broker mutual-ask edge",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const { transport, tool, agent } = await setupPlugin();
@@ -1022,7 +1058,7 @@ test(
 
 test(
   "plugin ask timeout reports the message id and delivery state",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const { transport, tool, agent } = await setupPlugin({
@@ -1049,7 +1085,7 @@ test(
 
 test(
   "plugin receives a mailbox flush delivered at registration time",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     // First incarnation of the worker: named, then disconnects.
@@ -1109,7 +1145,7 @@ test(
 
 test(
   "plugin send queues mail for a disconnected named target and cancel withdraws it",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const { transport, tool, agent } = await setupPlugin();
@@ -1178,7 +1214,7 @@ test(
 
 test(
   "inboundTrigger never parks inbound sends via inject without waking a turn",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const { transport, calls } = await setupPlugin({
@@ -1211,7 +1247,7 @@ test(
 
 test(
   "inboundTrigger replies parks plain sends but wakes on replies",
-  { concurrency: false },
+  { concurrency: false, timeout: 30_000 },
   async () => {
     const { planner, cleanup } = await setupClients();
     const { transport, calls } = await setupPlugin({

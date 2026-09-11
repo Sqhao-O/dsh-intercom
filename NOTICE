@@ -37,5 +37,9 @@ Adaptations relative to upstream:
 - `extension-state.ts`: temp state file is opened `r+` instead of `r` so the
   durability `fsync` works on Windows (upstream opened it read-only, which
   fails with EPERM there)
+- `broker/extension.test.ts`, `broker/abuse.test.ts`: the broker under test is
+  spawned as a direct child via `node --import tsx` instead of the tsx CLI
+  wrapper, and broker teardown escalates SIGTERM to SIGKILL after 2s — the
+  wrapper could swallow SIGTERM on unix and orphan the broker, which hung CI
 
 The full MIT license text is in `LICENSE`.
