@@ -1,6 +1,6 @@
 # dsh-intercom
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) | [中文](README.zh-CN.md) | [安装提示词](INSTALL.zh-CN.md)
 
 [![CI](https://github.com/Sqhao-O/dsh-intercom/actions/workflows/ci.yml/badge.svg)](https://github.com/Sqhao-O/dsh-intercom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -9,6 +9,13 @@
 An intercom plugin for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness): discovery, 1:1 messaging, and request/reply between independent dsh sessions running on the same machine.
 
 Ported from [pi-intercom](https://github.com/nicobailon/pi-intercom) (MIT, Copyright Nico Bailon) — see [NOTICE](NOTICE).
+
+## Install with one prompt
+
+No checkout, no build toolchain: paste one prompt into a running DSH session
+and the agent installs the plugin from GitHub, verifies the profile, and walks
+you through a two-session messaging check. See [INSTALL.md](INSTALL.md)
+([中文](INSTALL.zh-CN.md)) — or keep reading for the manual quickstart.
 
 ## Features
 

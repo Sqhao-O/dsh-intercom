@@ -1,6 +1,6 @@
 # dsh-intercom
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) | [中文](README.zh-CN.md) | [Install prompt](INSTALL.md)
 
 [![CI](https://github.com/Sqhao-O/dsh-intercom/actions/workflows/ci.yml/badge.svg)](https://github.com/Sqhao-O/dsh-intercom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -9,6 +9,13 @@
 [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) 的 intercom 插件：让同一台机器上多个相互独立的 dsh session 互相发现、一对一收发消息、请求-应答。
 
 移植自 [pi-intercom](https://github.com/nicobailon/pi-intercom)（MIT，Copyright Nico Bailon）—— 署名说明见 [NOTICE](NOTICE)。
+
+## 一段提示词完成安装
+
+无需提前克隆本仓库，也不需要构建工具链。把一段提示词粘贴到正在运行的
+DSH 会话里，代理会完成从 GitHub 安装、profile 校验到双会话互发消息验证的
+全部步骤。见 [INSTALL.zh-CN.md](INSTALL.zh-CN.md)（[English](INSTALL.md)），
+或者继续往下读手动 quickstart。
 
 ## 功能
 

@@ -22,7 +22,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoDir = process.cwd();
-const README_FILES = ["README.md", "README.zh-CN.md"];
+const README_FILES = [
+  "README.md",
+  "README.zh-CN.md",
+  "INSTALL.md",
+  "INSTALL.zh-CN.md",
+];
 const E2E_SOURCES = [
   "tests/e2e/run.ts",
   "tests/e2e/runner-plugin.mjs",
