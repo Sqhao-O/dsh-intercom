@@ -41,6 +41,7 @@
     "test:install": "tsx tests/e2e/install-preview.ts",
     "test:panel": "tsx tests/e2e/panel.ts",
     "test:dod": "tsx tests/e2e/dod-install.ts",
+    "test:accept": "node tests/accept/local-env.mjs",
     "lint": "oxlint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

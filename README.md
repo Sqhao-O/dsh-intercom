@@ -217,6 +217,28 @@ real API key, and the real `~/.dsh` is never touched. They are kept out of
   pushed GitHub repo in a fresh scratch home, then boots two dsh processes and
   proves planner→worker delivery and a worker→planner ask/reply.
 
+## Local acceptance
+
+`pnpm test:accept` (`tests/accept/`, also kept out of `pnpm test`) is the one
+suite that deliberately targets the CURRENT `DSH_HOME` — by default the real
+`~/.dsh` — for an in-place check after installing into the real web profile.
+It boots a real `dsh web` against the repo's mock LLM (child-env
+`DEEPSEEK_BASE_URL` / `DEEPSEEK_API_KEY=test`; `settings.yaml` is never
+touched and no real model call is made), temporarily appends a single probe
+row to the web profile's `cordis.patch.yml` (backed up first, restored
+byte-identical with a sha256 check on every exit path), and asserts the
+real-environment wiring: tool + skill registration, broker auto-spawn under
+`~/.dsh/intercom`, the panel roster/send routes (relay + wake in the worker's
+session log, and a 400 for a non-local sender), an ask/reply between the
+probe sessions, and the served `client.js`. Probe sessions
+(`accept-planner-*` / `accept-worker-*`) persist under `~/.dsh/sessions/` and
+are listed at the end; the acceptance-spawned `dsh web` is stopped (the
+broker self-exits when idle).
+
+```bash
+pnpm test:accept
+```
+
 ## Known limitations
 
 - **Same machine only.** Discovery and delivery go through a local socket

@@ -55,7 +55,11 @@ Bailon) — attribution lives in `NOTICE`.
   never spawns the broker; `tests/docs.test.ts` is the docs-as-tests check that
   every runnable README command is really executed somewhere),
   `tests/e2e/` (real-dsh cross-process end-to-end and the tarball install
-  preview, see its README).
+  preview, see its README), `tests/accept/` (`local-env.mjs` driver +
+  `probe.mjs`: the real-environment acceptance that boots `dsh web` against
+  the CURRENT `DSH_HOME` with a mock LLM, temporarily appending one probe row
+  to the real web profile's `cordis.patch.yml` and restoring it
+  byte-identical on exit).
 - `lib/` — **committed build output** (see below).
 
 ### Runtime layout
@@ -77,6 +81,7 @@ pnpm build       # tsdown → lib/ (ESM, one file per source file)
 pnpm test        # tsx --test over broker/cwd/plugin unit tests (incl. abuse + docs tests)
 pnpm test:e2e    # real-dsh end-to-end (tests/e2e/; needs pnpm build + global dsh)
 pnpm test:install# tarball install preview (pack → install → boot in a scratch DSH_HOME)
+pnpm test:accept # real-env acceptance (tests/accept/; targets the CURRENT DSH_HOME, mock LLM, restores the profile patch)
 pnpm lint        # oxlint
 pnpm format      # prettier --write
 pnpm typecheck   # tsc --noEmit (strict, NodeNext)

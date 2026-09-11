@@ -194,6 +194,23 @@ API key，也绝不触碰真实的 `~/.dsh`。它们不包含在 `pnpm test` 中
   `dsh plugin --profile web add github:Sqhao-O/dsh-intercom`，然后启动两个 dsh 进程，验证
   planner→worker 的送达以及 worker→planner 的 ask/reply。
 
+## 本机验收
+
+`pnpm test:accept`（`tests/accept/`，同样不包含在 `pnpm test` 中）是唯一一套刻意针对
+CURRENT `DSH_HOME`（默认为真实的 `~/.dsh`）的测试，用于插件装进真实 web profile 后的
+就地验收。它用仓库自带的 mock LLM 启动真实 `dsh web`（通过子进程环境变量
+`DEEPSEEK_BASE_URL` / `DEEPSEEK_API_KEY=test`；绝不触碰 `settings.yaml`，也不会发起真实
+模型调用），临时向 web profile 的 `cordis.patch.yml` 追加一行探针配置（先备份，退出时按
+sha256 校验逐字节恢复），并断言真实环境接线：tool 与 skill 注册、broker 在
+`~/.dsh/intercom` 下自动拉起、面板的 roster/send 路由（relay 落进 worker session 日志并唤醒，
+非本地 sender 返回 400）、两个探针 session 之间的 ask/reply，以及 `client.js` 的伺服。探针
+session（`accept-planner-*` / `accept-worker-*`）会留在 `~/.dsh/sessions/` 并在结尾列出；
+验收启动的 `dsh web` 会被停止（broker 空闲后自行退出）。
+
+```bash
+pnpm test:accept
+```
+
 ## 已知限制
 
 - **仅限同一台机器。** 发现与投递都走以 `$DSH_HOME/intercom` 为键的本地 socket
