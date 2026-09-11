@@ -106,8 +106,12 @@ async function connectRaw(homeDir: string): Promise<RawProbe> {
   // surfaces client-side as ECONNRESET — record it instead of letting the
   // unhandled 'error' event kill the test.
   socket.on("error", (error) => errors.push(error));
-  const closed = once(socket, "close").then(() => true);
-  closed.catch(() => false);
+  // events.once rejects when 'error' fires before 'close', but a reset
+  // connection is still a closed connection for these assertions.
+  const closed = once(socket, "close").then(
+    () => true,
+    () => true,
+  );
   return { socket, messages, errors, closed };
 }
 
