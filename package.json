@@ -83,9 +83,8 @@
     "oxlint": "^1.78.0",
     "prettier": "^3.9.6",
     "simple-git-hooks": "^2.13.1",
-    "tsdown": "^0.22.14",
+    "tsdown": "^0.21.10",
     "tsx": "^4.23.12",
-    "unrun": "^0.3.1",
     "typescript": "^5.9.3"
   }
 }
