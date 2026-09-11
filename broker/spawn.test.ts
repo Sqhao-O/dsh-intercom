@@ -249,7 +249,12 @@ test("spawnBrokerIfNeeded surfaces default broker startup failures", async () =>
   } finally {
     if (previousDshHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousDshHome;
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
   }
 });
 

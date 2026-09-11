@@ -102,6 +102,10 @@ async function connectRaw(homeDir: string): Promise<RawProbe> {
       (error) => errors.push(error),
     ),
   );
+  // The broker destroys abusive connections with an error attached, which
+  // surfaces client-side as ECONNRESET — record it instead of letting the
+  // unhandled 'error' event kill the test.
+  socket.on("error", (error) => errors.push(error));
   const closed = once(socket, "close").then(() => true);
   closed.catch(() => false);
   return { socket, messages, errors, closed };

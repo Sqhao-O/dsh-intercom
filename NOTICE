@@ -41,5 +41,11 @@ Adaptations relative to upstream:
   spawned as a direct child via `node --import tsx` instead of the tsx CLI
   wrapper, and broker teardown escalates SIGTERM to SIGKILL after 2s — the
   wrapper could swallow SIGTERM on unix and orphan the broker, which hung CI
+- `broker/abuse.test.ts`: raw probe sockets record `error` events (e.g.
+  ECONNRESET when the broker destroys an abusive connection) instead of
+  letting the unhandled event crash the test
+- `broker/spawn.test.ts`: the fake-broker cleanup retries `rmSync` on
+  EBUSY/ENOTEMPTY because the just-exited process can still hold the
+  directory on Windows
 
 The full MIT license text is in `LICENSE`.
