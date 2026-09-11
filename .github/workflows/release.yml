@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # changesets needs the full tag history: `changeset tag` skips
+          # changesets needs the full tag history: `changeset git-tag` skips
           # versions whose tags already exist, and the version PR diffs
           # CHANGELOG.md entries against earlier releases.
           fetch-depth: 0
