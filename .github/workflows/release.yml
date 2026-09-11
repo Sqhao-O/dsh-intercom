@@ -13,8 +13,14 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # changesets needs the full tag history: `changeset git-tag` skips
+          # versions whose tags already exist, and the version PR diffs
+          # CHANGELOG.md entries against earlier releases.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
 
@@ -38,8 +44,11 @@ jobs:
         uses: changesets/action@v1
         with:
           # No npm publish: dsh plugins install from GitHub. Tagging the
-          # released versions is enough.
-          publish: pnpm exec changeset tag
+          # released versions is enough. changeset git-tag creates the tags
+          # locally (skipping versions already tagged) but never pushes
+          # them, and action@v1 only auto-pushes tags it detects from
+          # `changeset publish` output, so push the tags explicitly.
+          publish: pnpm exec changeset git-tag && git push --tags
           commit: "chore: release"
           title: "chore: release"
         env:

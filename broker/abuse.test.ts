@@ -1,7 +1,7 @@
 /**
  * Malformed-frame / abuse tests against a real broker spawned from TypeScript
- * source via the tsx CLI (same harness as broker/extension.test.ts), each test
- * with its own scratch DSH_HOME.
+ * source via `node --import tsx` (same harness as broker/extension.test.ts),
+ * each test with its own scratch DSH_HOME.
  *
  * Asserts the vendored broker's actual defensive behavior (see framing.ts and
  * broker.ts): a malformed frame, a protocol violation, or an exhausted
@@ -12,7 +12,6 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,11 +22,6 @@ import { createMessageReader, writeMessage } from "./framing.ts";
 import { getBrokerSocketPath } from "./paths.ts";
 
 const repoDir = process.cwd();
-const requireFromHere = createRequire(import.meta.url);
-const tsxCliPath = path.join(
-  path.dirname(requireFromHere.resolve("tsx")),
-  "cli.mjs",
-);
 
 function registration(name: string): SessionRegistration {
   return {
@@ -45,7 +39,7 @@ async function startBroker(
 ): Promise<ChildProcessWithoutNullStreams> {
   const broker = spawn(
     process.execPath,
-    [tsxCliPath, path.join(repoDir, "broker", "broker.ts")],
+    ["--import", "tsx", path.join(repoDir, "broker", "broker.ts")],
     {
       cwd: repoDir,
       env: { ...process.env, DSH_HOME: homeDir },
@@ -75,9 +69,16 @@ async function startBroker(
 async function stopBroker(
   broker: ChildProcessWithoutNullStreams,
 ): Promise<void> {
-  if (broker.exitCode !== null) return;
+  if (broker.exitCode !== null || broker.signalCode !== null) return;
   broker.kill("SIGTERM");
-  await once(broker, "exit");
+  const exited = await Promise.race([
+    once(broker, "exit").then(() => true),
+    new Promise<false>((resolve) => setTimeout(resolve, 2000, false)),
+  ]);
+  if (exited) return;
+  // Escalate so a wedged broker can never hang the test file.
+  broker.kill("SIGKILL");
+  await once(broker, "exit").catch(() => undefined);
 }
 
 interface RawProbe {
@@ -101,8 +102,16 @@ async function connectRaw(homeDir: string): Promise<RawProbe> {
       (error) => errors.push(error),
     ),
   );
-  const closed = once(socket, "close").then(() => true);
-  closed.catch(() => false);
+  // The broker destroys abusive connections with an error attached, which
+  // surfaces client-side as ECONNRESET — record it instead of letting the
+  // unhandled 'error' event kill the test.
+  socket.on("error", (error) => errors.push(error));
+  // events.once rejects when 'error' fires before 'close', but a reset
+  // connection is still a closed connection for these assertions.
+  const closed = once(socket, "close").then(
+    () => true,
+    () => true,
+  );
   return { socket, messages, errors, closed };
 }
 

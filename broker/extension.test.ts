@@ -4,21 +4,17 @@ import { once } from "node:events";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import test from "node:test";
 import type { BrokerMessage, SessionRegistration } from "../types.ts";
 import { IntercomClient } from "./client.ts";
 import { ExtensionStateManager } from "./extension-state.ts";
 
 const repoDir = process.cwd();
-// The broker under test runs from TypeScript source via the tsx CLI (a dev
-// dependency); the compiled lib/broker/broker.js path is covered by the smoke
-// test in tests/smoke.mjs.
-const requireFromHere = createRequire(import.meta.url);
-const tsxCliPath = path.join(
-  path.dirname(requireFromHere.resolve("tsx")),
-  "cli.mjs",
-);
+// The broker under test runs from TypeScript source via `node --import tsx`
+// (tsx is a dev dependency); the compiled lib/broker/broker.js path is covered
+// by the smoke test in tests/smoke.mjs. The tsx CLI wrapper is avoided on
+// purpose: it interposes a middle process that can swallow SIGTERM on unix
+// and orphan the broker, which hung CI.
 
 function registration(
   name: string,
@@ -57,7 +53,7 @@ async function startBroker(
 ): Promise<ChildProcessWithoutNullStreams> {
   const broker = spawn(
     process.execPath,
-    [tsxCliPath, path.join(repoDir, "broker", "broker.ts")],
+    ["--import", "tsx", path.join(repoDir, "broker", "broker.ts")],
     {
       cwd: repoDir,
       env: { ...process.env, DSH_HOME: agentDir },
@@ -87,9 +83,16 @@ async function startBroker(
 async function stopBroker(
   broker: ChildProcessWithoutNullStreams,
 ): Promise<void> {
-  if (broker.exitCode !== null) return;
+  if (broker.exitCode !== null || broker.signalCode !== null) return;
   broker.kill("SIGTERM");
-  await once(broker, "exit");
+  const exited = await Promise.race([
+    once(broker, "exit").then(() => true),
+    new Promise<false>((resolve) => setTimeout(resolve, 2000, false)),
+  ]);
+  if (exited) return;
+  // Escalate so a wedged broker can never hang the test file.
+  broker.kill("SIGKILL");
+  await once(broker, "exit").catch(() => undefined);
 }
 
 test(
