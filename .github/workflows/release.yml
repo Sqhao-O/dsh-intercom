@@ -47,8 +47,11 @@ jobs:
           # released versions is enough. changeset git-tag creates the tags
           # locally (skipping versions already tagged) but never pushes
           # them, and action@v1 only auto-pushes tags it detects from
-          # `changeset publish` output, so push the tags explicitly.
-          publish: pnpm exec changeset git-tag && git push --tags
+          # `changeset publish` output, so push the tags explicitly. The
+          # publish command must be a package.json script: action@v1 spawns
+          # non-script commands without a shell, which would split `&&` into
+          # changeset's argv.
+          publish: pnpm run release
           commit: "chore: release"
           title: "chore: release"
         env:

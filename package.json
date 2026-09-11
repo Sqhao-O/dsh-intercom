@@ -36,6 +36,7 @@
   "scripts": {
     "build": "tsdown",
     "setup-hooks": "simple-git-hooks",
+    "release": "changeset git-tag && git push --tags",
     "test": "tsx --test broker/ask-timeout.test.ts broker/abuse.test.ts broker/client.test.ts broker/client-liveness.test.ts broker/extension.test.ts broker/framing.test.ts broker/paths.test.ts broker/runtime-claim.test.ts broker/spawn.test.ts cwd.test.ts tests/config.test.ts tests/config-lifecycle.test.ts tests/registry.test.ts tests/message.test.ts tests/reply-tracker.test.ts tests/transport-local.test.ts tests/tool.test.ts tests/tool-abort.test.ts tests/tool-broker.test.ts tests/docs.test.ts tests/intercom.integration.test.ts",
     "test:e2e": "tsx tests/e2e/run.ts",
     "test:install": "tsx tests/e2e/install-preview.ts",
