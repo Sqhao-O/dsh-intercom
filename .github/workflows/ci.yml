@@ -73,17 +73,31 @@ jobs:
         shell: bash
         run: |
           mkdir -p /tmp/reports
+          rm -f /tmp/broker-tee.log
           export NODE_OPTIONS="--report-on-signal --report-signal=SIGUSR2 --report-directory=/tmp/reports"
+          export DSH_INTERCOM_TEST_TEE=/tmp/broker-tee.log
 
           dump_diagnostics() {
             echo "=== processes ==="
-            ps -eo pid,ppid,etime,stat,args || true
-            echo "=== fds of test children ==="
-            for pid in $(pgrep -f "intercom.integration" || true); do
+            ps -eo pid,ppid,etime,stat,wchan:32,args || true
+            echo "=== per-node-proc kernel state ==="
+            for pid in $(pgrep -f "node|esbuild" || true); do
               echo "--- pid $pid ---"
-              ls -l "/proc/$pid/fd" || true
-              cat "/proc/$pid/status" | head -20 || true
+              cat "/proc/$pid/wchan" 2>/dev/null || true; echo
+              grep -E "State|VmRSS|Threads|Sig" "/proc/$pid/status" 2>/dev/null || true
+              ls -l "/proc/$pid/fd" 2>/dev/null || true
+              echo "--- kernel stack $pid ---"
+              sudo -n cat "/proc/$pid/stack" 2>/dev/null || cat "/proc/$pid/stack" 2>/dev/null || true
+              for t in /proc/$pid/task/*/stack; do
+                sudo -n cat "$t" 2>/dev/null || cat "$t" 2>/dev/null || true
+              done
             done
+            echo "=== limits of test child ==="
+            for pid in $(pgrep -f "tests/intercom.integration" || true); do
+              grep -E "open files|processes" "/proc/$pid/limits" 2>/dev/null || true
+            done
+            echo "=== broker tee log ==="
+            cat /tmp/broker-tee.log 2>/dev/null || true
             echo "=== broker sockets ==="
             find /tmp -maxdepth 4 -name "*.sock" 2>/dev/null || true
             echo "=== sending SIGUSR2 for diagnostic reports ==="

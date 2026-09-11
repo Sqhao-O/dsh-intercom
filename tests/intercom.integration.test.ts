@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Agent } from "@deepseek-ai/dsh-agent";
@@ -62,6 +62,12 @@ function spawnBroker(): { broker: ChildProcess; brokerLog: () => string } {
   let captured = "";
   const remember = (chunk: Buffer) => {
     captured = (captured + chunk.toString()).slice(-8192);
+    // TEMPORARY debug tee for the CI hang investigation — removed with the
+    // debug-unix-hang job.
+    const teePath = process.env.DSH_INTERCOM_TEST_TEE;
+    if (teePath) {
+      appendFileSync(teePath, chunk);
+    }
   };
   (broker.stdout as NodeJS.ReadableStream | null)?.on("data", remember);
   (broker.stderr as NodeJS.ReadableStream | null)?.on("data", remember);
