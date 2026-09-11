@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Agent } from "@deepseek-ai/dsh-agent";
@@ -62,12 +62,6 @@ function spawnBroker(): { broker: ChildProcess; brokerLog: () => string } {
   let captured = "";
   const remember = (chunk: Buffer) => {
     captured = (captured + chunk.toString()).slice(-8192);
-    // TEMPORARY debug tee for the CI hang investigation — removed with the
-    // debug-unix-hang job.
-    const teePath = process.env.DSH_INTERCOM_TEST_TEE;
-    if (teePath) {
-      appendFileSync(teePath, chunk);
-    }
   };
   (broker.stdout as NodeJS.ReadableStream | null)?.on("data", remember);
   (broker.stderr as NodeJS.ReadableStream | null)?.on("data", remember);
@@ -1276,17 +1270,21 @@ test(
       assert.equal(calls[0]!.method, "inject");
 
       // Set up a real ask edge (plugin → planner) at the client level, with no
-      // reply waiter, so the planner's reply is a valid inbound reply.
+      // reply waiter, so the planner's reply is a valid inbound reply. The
+      // listener attaches BEFORE the send resolves: the broker writes the
+      // message to the recipient before the delivered receipt (broker.ts), so
+      // attaching after `send` can miss the event entirely — deterministically
+      // on unix, where both clients share this process's event loop.
       const selfClient = transport.sessionFor("integ-self")!.client!;
+      const plannerGotAsk = once(planner, "message") as Promise<
+        [SessionInfo, Message]
+      >;
       const askOut = await selfClient.send(planner.sessionId!, {
         messageId: "replies-edge-ask",
         text: "question for the planner",
         expectsReply: true,
       });
       assert.equal(askOut.delivered, true);
-      const plannerGotAsk = once(planner, "message") as Promise<
-        [SessionInfo, Message]
-      >;
       const [, askMessage] = await plannerGotAsk;
       assert.equal(askMessage.id, "replies-edge-ask");
 
